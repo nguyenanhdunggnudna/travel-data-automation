@@ -1,0 +1,44 @@
+{
+  "name": "travel-data-automation",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "lint": "npx eslint .",
+    "lint-and-fix": "eslint . --fix",
+    "format": "npx prettier . --write",
+    "build": "rimraf ./dist && tsc && tsc-alias",
+    "dev": "npx nodemon",
+    "prod": "npm run build && node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/cheerio": "^0.22.35",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.2.1",
+    "globals": "^15.13.0",
+    "nodemon": "^3.1.9",
+    "prettier": "3.4.2",
+    "rimraf": "^6.0.1",
+    "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.10",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "cheerio": "^1.1.2",
+    "dotenv": "^17.2.3",
+    "googleapis": "^166.0.0",
+    "node-cron": "^4.2.1",
+    "puppeteer": "^24.31.0",
+    "winston": "^3.18.3"
+  }
+}
