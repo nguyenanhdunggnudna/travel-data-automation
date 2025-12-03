@@ -38,7 +38,9 @@
     "dotenv": "^17.2.3",
     "googleapis": "^166.0.0",
     "node-cron": "^4.2.1",
+    "open": "^11.0.0",
     "puppeteer": "^24.31.0",
-    "winston": "^3.18.3"
+    "winston": "^3.18.3",
+    "xlsx": "^0.18.5"
   }
 }
