@@ -10,7 +10,7 @@ const COOKIE_PATH = path.join(process.cwd(), 'tripcom_cookies.json');
 export class TripcomCrawler {
   private browser: Browser | null = null;
 
-  async initBrowser(headless = true): Promise<Browser> {
+  async initBrowser(headless = false): Promise<Browser> {
     if (this.browser) return this.browser;
 
     this.browser = await puppeteer.launch({

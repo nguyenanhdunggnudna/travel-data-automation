@@ -1,13 +1,11 @@
-import { google, gmail_v1 } from 'googleapis';
+import { google } from 'googleapis';
 import fs from 'fs';
 import path from 'path';
-import { GaxiosResponse } from 'gaxios';
 
 import 'dotenv/config';
 import { TripcomCrawler } from '../tripcom.crawler';
 import { BookingDetail, parseBookingDetail } from '../tripcom.parse';
 
-// --- Gmail OAuth setup ---
 const CREDENTIALS_PATH = path.join(__dirname, 'credentials.json');
 const TOKEN_PATH = path.join(__dirname, 'token.json');
 const SCOPES = [
@@ -16,7 +14,7 @@ const SCOPES = [
 ];
 
 import readline from 'readline';
-import { fetchFlightInfo } from '@modules/flight/flight';
+import { fetchFlightInfoSmart } from '@modules/flight/flight';
 import { formatDepartureDate } from '@utils/data';
 
 function getNewToken(oAuth2Client: any): Promise<any> {
@@ -71,7 +69,7 @@ async function getAllOrderIds(auth: any): Promise<string[]> {
   const resList = await gmail.users.messages.list({
     userId: 'me',
     maxResults: 50, // tùy bạn
-    q: 'from:"dinhquanghoa2009@gmail.com" to:"nguyenanhdunggnudna2@gmail.com" subject:"Trip.com ANT" is:unread'
+    q: 'from:"kpeople0915@gmail.com" to:"nguyenanhdunggnudna2@gmail.com" subject:"Trip.com ANT"'
   });
 
   const messages = resList.data.messages;
@@ -118,7 +116,7 @@ async function appendToGoogleSheet(
 
   const formatTime = (time?: string) => time?.split(' ')[0] ?? '';
 
-  console.log('In4: ', detail);
+  console.log('In4: ', detail.flightInfo);
 
   const formattedDate = formatDepartureDate(detail.flightInfo?.departureDate);
 
@@ -130,15 +128,17 @@ async function appendToGoogleSheet(
     formatTime(detail.flightInfo?.departureTimeScheduled),
     detail.adults,
     detail.children,
-    detail.airport || '',
+    detail.isDeparture
+      ? `${detail.flightInfo.routeFrom} (EXIT)`
+      : detail.flightInfo.routeFrom || '',
     'CTRIP',
     detail.orderId,
     '',
     detail.name,
     flightMissingFlag,
     '',
-    detail.arrival,
-    detail.departure
+    detail.isArrival,
+    detail.isDeparture
   ];
 
   try {
@@ -182,7 +182,7 @@ export async function RunCrawl(): Promise<void> {
     const detail: BookingDetail = await parseBookingDetail(page, orderId);
 
     if (detail.flightNo) {
-      detail.flightInfo = await fetchFlightInfo(detail.flightNo);
+      detail.flightInfo = await fetchFlightInfoSmart(detail.flightNo);
     }
 
     const jsonPath = path.join(process.cwd(), `${orderId}.json`);

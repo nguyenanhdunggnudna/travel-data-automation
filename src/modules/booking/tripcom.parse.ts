@@ -54,7 +54,7 @@ export async function parseBookingDetail(
         if (cells.length === 0) return;
 
         if (index === 0) {
-          service = cells[0].innerText.trim();
+          service = cells[1].innerText.trim();
           const airportMatch = service.match(
             /([A-Za-z\s]+?)(?: Airport| International Airport)/i
           );
@@ -91,7 +91,7 @@ export async function parseBookingDetail(
       return { rows, totalAdults, isArrival, isDeparture, airport };
     });
 
-  const fullName = rows.join(', ');
+  const fullName = rows.join('\n');
   const adults = totalAdults;
 
   // Lấy flight number
