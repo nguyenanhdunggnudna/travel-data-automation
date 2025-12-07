@@ -1,7 +1,6 @@
 export function formatDepartureDate(raw?: string): string {
   if (!raw) return '';
 
-  // raw: "03-Dec-2025"
   const match = raw.match(/^(\d{2})-([a-zA-Z]{3})-(\d{4})$/);
   if (!match) return '';
 

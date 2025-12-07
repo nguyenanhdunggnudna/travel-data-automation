@@ -1,22 +1,16 @@
+import { FlightInfo } from '@modules/tripcom/tripcom.types';
 import { setTripComLanguageToEnglish } from '@utils/switch-language-trip-flight';
 import puppeteer, { Browser, Page } from 'puppeteer';
 import { setTimeout as delay } from 'timers/promises';
 
-interface FlightInfo {
-  flightNo: string;
-  status?: string;
-  departure?: string;
-  arrival?: string;
-  route?: string;
-  info: boolean;
-}
-
-async function fetchFlightInfo(flightNo: string): Promise<FlightInfo> {
+async function fetchFlightInfo(
+  flightNo: string,
+  isDeparture?: boolean
+): Promise<any> {
   const browser: Browser = await puppeteer.launch({ headless: true });
   const page: Page = await browser.newPage();
 
   try {
-    // Tách flightNo thành airlineCode + flightNumber
     const match = flightNo.match(/^([A-Z]{2,3})(\d+)$/i);
     if (!match) throw new Error('Invalid flight number format');
 
@@ -25,23 +19,18 @@ async function fetchFlightInfo(flightNo: string): Promise<FlightInfo> {
 
     const url = `https://www.flightstats.com/v2/flight-tracker/${airlineCode}/${flightNumber}`;
 
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-
-    const acceptBtn = await page.$('#onetrust-accept-btn-handler');
-    if (acceptBtn) {
-      await acceptBtn.click();
-      await delay(1000);
-      console.log('Accepted cookies');
-    }
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
     const notFound = await page.$('div.error__title');
     if (notFound) {
       await browser.close();
-      return { flightNo, info: false };
+      return { info: false };
     }
 
     await page
-      .waitForSelector('.ticket-flight-status', { timeout: 10000 })
+      .waitForSelector('.ticket__FlightNumberContainer-sc-1rrbl5o-4', {
+        timeout: 15000
+      })
       .catch(() => null);
 
     const data = await page.evaluate(() => {
@@ -56,53 +45,22 @@ async function fetchFlightInfo(flightNo: string): Promise<FlightInfo> {
       info.routeFrom = routeCodes[0] ?? '';
       info.routeTo = routeCodes[1] ?? '';
 
-      const flightEl = document.querySelector(
-        '.ticket__FlightNumberContainer-sc-1rrbl5o-4'
-      );
-      if (flightEl) {
-        const divs = flightEl.querySelectorAll(
-          'div.text-helper__TextHelper-sc-8bko4a-0'
-        );
-        info.flightNo = divs[0]?.textContent?.trim() ?? '';
-        info.airline = divs[1]?.textContent?.trim() ?? '';
-      }
-
-      // Status
-      const statusEl = document.querySelector(
-        '.ticket__StatusContainer-sc-1rrbl5o-17'
-      );
-      if (statusEl) {
-        const divs = statusEl.querySelectorAll(
-          'div.text-helper__TextHelper-sc-8bko4a-0'
-        );
-        info.status = divs[0]?.textContent?.trim() ?? '';
-        info.onTime = divs[1]?.textContent?.trim() ?? '';
-      }
-
       const depContainer = document.querySelectorAll(
         '.ticket__TicketCard-sc-1rrbl5o-7'
       )[0];
       if (depContainer) {
-        info.departureDate =
-          depContainer.querySelector('.cPBDDe')?.textContent?.trim() ?? '';
         info.departureTimeScheduled =
           depContainer.querySelector('.jtsqcj .kbHzdx')?.textContent?.trim() ??
           '';
-        info.departureAirportFull =
-          depContainer.querySelector('.cHdMkI')?.textContent?.trim() ?? '';
       }
 
       const arrContainer = document.querySelectorAll(
         '.ticket__TicketCard-sc-1rrbl5o-7'
       )[1];
       if (arrContainer) {
-        info.arrivalDate =
-          arrContainer.querySelector('.cPBDDe')?.textContent?.trim() ?? '';
         info.arrivalTimeScheduled =
           arrContainer.querySelector('.jtsqcj .kbHzdx')?.textContent?.trim() ??
           '';
-        info.arrivalAirportFull =
-          arrContainer.querySelector('.cHdMkI')?.textContent?.trim() ?? '';
       }
 
       return info;
@@ -110,17 +68,41 @@ async function fetchFlightInfo(flightNo: string): Promise<FlightInfo> {
 
     await browser.close();
 
-    if (!data.flightNo) return { flightNo, info: false };
-    return { ...data, info: true };
+    if (!data.routeFrom || !data.routeTo) {
+      return { info: false };
+    }
+
+    // =============================
+    // CHUẨN HÓA DỮ LIỆU (giống TripCom)
+    // =============================
+
+    const fromCode = data.routeFrom.trim();
+    const toCode = data.routeTo.trim();
+
+    const depTime = data.departureTimeScheduled || '';
+    const arrTime = data.arrivalTimeScheduled || '';
+
+    return isDeparture
+      ? {
+          info: true,
+          airport: fromCode, // Sân bay đi
+          time: depTime // Giờ bay
+        }
+      : {
+          info: true,
+          airport: toCode, // Sân bay đến
+          time: arrTime // Giờ đến
+        };
   } catch (err) {
     console.error(err);
     await browser.close();
-    return { flightNo, info: false };
+    return { info: false };
   }
 }
 
 async function fetchFlightInfoFromTripCom(
-  flightNo: string
+  flightNo: string,
+  isDeparture?: boolean
 ): Promise<FlightInfo> {
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
@@ -131,12 +113,10 @@ async function fetchFlightInfoFromTripCom(
 
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-    setTripComLanguageToEnglish(page);
-
     const notFound = await page.$('.empty-state, .no-data, .no-result');
     if (notFound) {
       await browser.close();
-      return { flightNo, info: false };
+      return { info: false };
     }
 
     await page.waitForSelector('.flight-status-card-item-flight-container', {
@@ -209,7 +189,7 @@ async function fetchFlightInfoFromTripCom(
     await browser.close();
 
     if (!data.routeFrom && !data.routeTo) {
-      return { flightNo, info: false };
+      return { info: false };
     }
 
     // ================================
@@ -238,30 +218,51 @@ async function fetchFlightInfoFromTripCom(
       }
     }
 
-    return {
-      flightNo,
-      ...data,
-      routeFromCode,
-      routeToCode,
-      departureScheduledTimeOnly: depTime,
-      departureScheduledDateOnly: depDate,
-      info: true
-    };
+    const departureTime =
+      data.departureTimeReal || data.departureTimeScheduled || '';
+
+    const arrivalTime = data.arrivalTimeReal || data.arrivalTimeScheduled || '';
+
+    return isDeparture
+      ? {
+          info: true,
+          airport: routeFromCode, // Sân bay đi
+          time: departureTime // Giờ khởi hành
+        }
+      : {
+          info: true,
+          airport: routeToCode, // Sân bay đến
+          time: arrivalTime // Giờ hạ cánh
+        };
+
+    // return isDeparture
+    //   ? {
+    //       info: true,
+    //       airport: routeToCode,
+    //       time: depTime
+    //     }
+    //   : {
+    //       info: true,
+    //       airport: routeFromCode,
+    //       time: data.arrivalTimeReal
+    //     };
   } catch (err) {
     console.error(err);
     await browser.close();
-    return { flightNo, info: false };
+    return { info: false };
   }
 }
 
 export async function fetchFlightInfoSmart(
-  flightNo: string
+  flightNo: string,
+  isDeparture?: boolean
 ): Promise<FlightInfo> {
   const statsData = await fetchFlightInfo(flightNo);
   if (statsData.info === true) return statsData;
 
-  // const fallbackData = await fetchFlightInfoFromTripCom(flightNo);
-  // if (fallbackData.info === true) return fallbackData;
+  const fallbackData = await fetchFlightInfoFromTripCom(flightNo, isDeparture);
+  console.log('fallbackData: ', fallbackData);
+  if (fallbackData.info === true) return fallbackData;
 
-  return { flightNo, info: false };
+  return { info: false };
 }
