@@ -42,4 +42,5 @@ export interface BookingDetail {
   contact?: string;
   dateOfUse?: string;
   time?: string;
+  bookingDate?: string;
 }

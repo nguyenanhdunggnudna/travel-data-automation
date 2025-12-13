@@ -9,6 +9,7 @@ import { Page } from 'puppeteer';
 import { BrowserService } from '@modules/broswer/broswer';
 import { PLATFORM } from 'src/config/platform/platform.constant';
 import { fetchFlightInfoSmart } from '@modules/flight/flight';
+import { LoggerService } from 'src/logger/logger';
 
 interface BookingData {
   bookingId: string;
@@ -60,12 +61,19 @@ export class KKdayCrawler {
     process.cwd(),
     '/cookies/kkday/kkday_cookies.json'
   );
+  private kkdayPage: Page | null = null;
 
   constructor(
     private readonly googleSheet: GoggleSheetService,
     private readonly googleService: GoogleService,
-    private readonly browserService: BrowserService
+    private readonly browserService: BrowserService,
+    private readonly loggerService: LoggerService
   ) {}
+
+  async initBrowser(): Promise<Page> {
+    const page = await this.browserService.newPage('KKDAY');
+    return page;
+  }
 
   async saveCookies(page: Page): Promise<void> {
     const cookies = await page.cookies();
@@ -161,10 +169,7 @@ export class KKdayCrawler {
   }
 
   async getLatestVerificationCode(): Promise<string | null> {
-    const body = await this.getLatestEmailBody(
-      'KKday Login Verification Code',
-      true
-    );
+    const body = await this.getLatestEmailBody('KKday Login Verification Code');
     if (!body) return null;
 
     const match = body.match(/verification code is (\d{6})/i);
@@ -213,8 +218,12 @@ export class KKdayCrawler {
     }
   }
 
-  async runLoginFlow(email: string, password: string): Promise<Page> {
-    const page = await this.browserService.newPage('KKDAY');
+  async runLoginFlow(
+    email: string,
+    password: string,
+    page: Page
+  ): Promise<Page> {
+    this.kkdayPage = page;
 
     await page.goto('https://scm.kkday.com/v1/en/auth/login', {
       waitUntil: 'networkidle2'
@@ -228,25 +237,30 @@ export class KKdayCrawler {
       await this.submitLogin(page);
 
       const code = await this.getLatestVerificationCode();
-      if (!code)
+      if (!code) {
         throw new Error('Không tìm thấy verification code trong Gmail');
+      }
 
       await this.fillVerificationCode(code, page);
       await this.saveCookies(page);
     }
 
+    this.loggerService.info('KKDAY login thành công');
+
     return page;
   }
 
   // ---------- MAIL PARSER ----------
-  async getLatestEmailBody(
-    subject: string,
-    isGetVerifyCode: boolean
-  ): Promise<string | null> {
+  async getLatestEmailBody(subject: string): Promise<string | null> {
+    const delay = (ms: number): Promise<void> =>
+      new Promise<void>((resolve: () => void) => {
+        setTimeout(resolve, ms);
+      });
+
+    await delay(30000);
+
     const auth = await this.googleService.authorize();
     const gmail = google.gmail({ version: 'v1', auth });
-
-    console.log('subject: ', subject);
 
     const list = await gmail.users.messages.list({
       userId: 'me',
@@ -255,8 +269,6 @@ export class KKdayCrawler {
     });
 
     const msg = list.data.messages?.[0];
-
-    console.log('msg: ', msg);
 
     if (!msg) return null;
 
@@ -277,22 +289,6 @@ export class KKdayCrawler {
       }
     });
 
-    if (!isGetVerifyCode) {
-      console.log('Vô get mail booking');
-      const emailSubject =
-        full.data.payload?.headers?.find((x: any) => x.name === 'Subject')
-          ?.value ?? '';
-
-      console.log('mail subject: ', emailSubject);
-
-      const bookingIdMatch = emailSubject.match(
-        /Booking ID:\s*([A-Za-z0-9]+)/i
-      );
-
-      console.log('bookingIdMatch: ', bookingIdMatch);
-      return bookingIdMatch ? bookingIdMatch[1] : null;
-    }
-
     const part =
       full.data.payload?.parts?.find(
         (p: any) => p.mimeType === 'text/html' || p.mimeType === 'text/plain'
@@ -303,34 +299,19 @@ export class KKdayCrawler {
     return Buffer.from(part.body.data, 'base64').toString('utf8');
   }
 
-  private parseBookingEmail(body: string): BookingDetail {
-    // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-    const pick = (regex: RegExp) => body.match(regex)?.[1]?.trim() ?? '';
-
-    return {
-      orderId: pick(/Booking Number:\s*([A-Z0-9]+)/),
-      dateOfUse: pick(/Date of Use:\s*([\d/]+)/),
-      adults: parseInt(pick(/Adult\s*x(\d+)/) || '0', 10),
-      children: parseInt(pick(/Child\s*x(\d+)/) || '0', 10)
-    };
-  }
-
-  private async saveToSheet(data: BookingDetail): Promise<void> {
+  private async saveToSheet(data: BookingDetail, mail: string): Promise<void> {
     const auth = await this.googleService.authorize();
     await this.googleSheet.appendToGoogleSheet(
       auth,
       data,
-      process.env.GOOGLE_SHEET_ID!
+      process.env.GOOGLE_SHEET_ID!,
+      mail
     );
   }
 
-  getLatestBookingFromMail(): Promise<string | null> {
-    return this.getLatestEmailBody('You have a new order', false);
-  }
-
   async crawlOrderDetail(bookingId: string, page: Page): Promise<FlightDetail> {
-    console.log('Bắt đầu cào');
     const url = `https://scm.kkday.com/v1/en/order/index/${bookingId}`;
+    this.loggerService.info(`Url kkday ${url}`);
     await page.goto(url, {
       waitUntil: 'domcontentloaded',
       timeout: 30000
@@ -363,7 +344,7 @@ export class KKdayCrawler {
       const flightDivs = Array.from(
         airlineSection.querySelectorAll('div.col-md-6')
       );
-      flightDivs.forEach((div: any) => {
+      flightDivs.forEach((div: Element) => {
         const title = div.querySelector('h4.area-title')?.textContent?.trim();
         if (!title) return;
 
@@ -371,7 +352,7 @@ export class KKdayCrawler {
         let flightNo = '';
         let dateTime = '';
 
-        lis.forEach((li: any) => {
+        lis.forEach((li: Element) => {
           const liTitle = li
             .querySelector('.info-list-title')
             ?.textContent?.trim();
@@ -396,7 +377,8 @@ export class KKdayCrawler {
 
       const phoneEl = Array.from(
         document.querySelectorAll('p.info-sub-list')
-      ).find((p) => p.textContent?.includes("Buyer's Phone Number"));
+      ).find((p: Element) => p.textContent?.includes("Buyer's Phone Number"));
+
       if (phoneEl) {
         const match = phoneEl.textContent?.match(/Buyer's Phone Number：(.+)/);
         result.contact = match ? match[1].trim() : '';
@@ -404,7 +386,7 @@ export class KKdayCrawler {
 
       // --- VIP level ---
       const vipEl = Array.from(document.querySelectorAll('div.text-sm')).find(
-        (div) => div.textContent?.includes('VIP Fast Track')
+        (div: Element) => div.textContent?.includes('VIP Fast Track')
       );
       if (vipEl) {
         result.serviceType = vipEl.textContent?.includes('[PREMIUM]')
@@ -417,13 +399,13 @@ export class KKdayCrawler {
       );
       const travelerNames: string[] = [];
 
-      travelerBoxes.forEach((box) => {
+      travelerBoxes.forEach((box: Element) => {
         let surname = '';
         let firstName = '';
 
         const rows = box.querySelectorAll('.info-list li');
 
-        rows.forEach((li: any) => {
+        rows.forEach((li: Element) => {
           const label = li.childNodes[0]?.textContent?.trim() ?? '';
           const value =
             li.querySelector('.pull-right b')?.textContent?.trim() ?? '';
@@ -465,7 +447,10 @@ export class KKdayCrawler {
     }, bookingId);
   }
 
-  async buildFullBookingInfo(flightDetail: any): Promise<FinalRecord[]> {
+  async buildFullBookingInfo(
+    flightDetail: any,
+    bookingDate: string
+  ): Promise<FinalRecord[]> {
     const result: FinalRecord[] = [];
 
     const common = {
@@ -475,11 +460,9 @@ export class KKdayCrawler {
       adults: flightDetail.adults,
       children: flightDetail.child,
       contact: `="${flightDetail.contact}"`,
-      serviceType: flightDetail.serviceType
+      serviceType: flightDetail.serviceType,
+      bookingDate
     };
-
-    // --- Arrival record ---
-    console.log('arival: ', flightDetail.arrival);
 
     if (flightDetail.arrival?.flightNo) {
       const flightInfo = await fetchFlightInfoSmart(
@@ -498,7 +481,6 @@ export class KKdayCrawler {
       });
     }
 
-    // --- Departure record ---
     if (flightDetail.departure?.flightNo) {
       const flightInfo = await fetchFlightInfoSmart(
         flightDetail.arrival?.flightNo,
@@ -519,21 +501,21 @@ export class KKdayCrawler {
     return result;
   }
 
-  async kkdayCrawl(orderId: string, page: Page): Promise<void> {
+  async kkdayCrawl(
+    orderId: string,
+    page: Page,
+    bookingDate: string
+  ): Promise<void> {
     const flightDetail = await this.crawlOrderDetail(orderId, page);
-
-    console.log('Dữ liệu cào được: ', flightDetail);
 
     if (!orderId) return;
 
-    const records = await this.buildFullBookingInfo(flightDetail);
+    const records = await this.buildFullBookingInfo(flightDetail, bookingDate);
 
-    console.log('records:', records);
+    this.loggerService.info(`Data cào được: ${records}`);
 
     for (const r of records) {
-      await this.saveToSheet(r);
+      await this.saveToSheet(r, 'timehouse@');
     }
-    // const fullInfo: FullBookingInfo = { ...bookingData, ...flightDetail };
-    // await this.saveToSheet(fullInfo);
   }
 }

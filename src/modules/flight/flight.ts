@@ -1,18 +1,65 @@
 import { FlightInfo } from '@modules/tripcom/tripcom.types';
-import { setTripComLanguageToEnglish } from '@utils/switch-language-trip-flight';
+
 import puppeteer, { Browser, Page } from 'puppeteer';
-import { setTimeout as delay } from 'timers/promises';
+
+async function getIataCode(airlineName: string): Promise<string | null> {
+  const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    const searchUrl = `https://www.iata.org/PublicationDetails/Search/?currentBlock=314383&currentPage=12572&airline.search=${encodeURIComponent(
+      airlineName
+    )}`;
+    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+
+    // lấy cột 3 (2-letter code) của bảng đầu tiên
+    const code = await page.$eval(
+      'table.datatable tbody tr td:nth-child(3)',
+      (el: HTMLTableCellElement) => (el.textContent || '').trim()
+    );
+
+    console.log('code: ', code);
+
+    await browser.close();
+    return code || null;
+  } catch (err) {
+    console.error('Error fetching IATA code:', err);
+    await browser.close();
+    return null;
+  }
+}
+
+async function normalizeFlightNo(raw: string): Promise<string | null> {
+  const numMatch = raw.match(/\d{1,4}/);
+  if (!numMatch) return null;
+  const flightNumber = numMatch[0];
+
+  const airlineNameMatch = raw.match(/^[^\d]+/);
+  if (!airlineNameMatch) return null;
+  const airlineName = airlineNameMatch[0].trim();
+
+  const iataCode = await getIataCode(airlineName);
+  if (!iataCode) return null;
+
+  return `${iataCode}${flightNumber}`;
+}
 
 async function fetchFlightInfo(
   flightNo: string,
   isDeparture?: boolean
 ): Promise<any> {
+  let normalizedFlightNo = flightNo;
   const browser: Browser = await puppeteer.launch({ headless: true });
   const page: Page = await browser.newPage();
 
   try {
-    const match = flightNo.match(/^([A-Z]{2,3})(\d+)$/i);
-    if (!match) throw new Error('Invalid flight number format');
+    let match = flightNo.match(/^([A-Z]{2,3})(\d+)$/i);
+    if (!match) {
+      normalizedFlightNo = (await normalizeFlightNo(flightNo)) || '';
+      match = normalizedFlightNo.match(/^([A-Z]{2,3})(\d+)$/i);
+      if (!match) {
+        return { info: false };
+      }
+    }
 
     const airlineCode = match[1].toUpperCase();
     const flightNumber = match[2];
@@ -71,10 +118,6 @@ async function fetchFlightInfo(
     if (!data.routeFrom || !data.routeTo) {
       return { info: false };
     }
-
-    // =============================
-    // CHUẨN HÓA DỮ LIỆU (giống TripCom)
-    // =============================
 
     const fromCode = data.routeFrom.trim();
     const toCode = data.routeTo.trim();
@@ -234,35 +277,23 @@ async function fetchFlightInfoFromTripCom(
           airport: routeToCode, // Sân bay đến
           time: arrivalTime // Giờ hạ cánh
         };
-
-    // return isDeparture
-    //   ? {
-    //       info: true,
-    //       airport: routeToCode,
-    //       time: depTime
-    //     }
-    //   : {
-    //       info: true,
-    //       airport: routeFromCode,
-    //       time: data.arrivalTimeReal
-    //     };
   } catch (err) {
-    console.error(err);
     await browser.close();
     return { info: false };
   }
 }
 
 export async function fetchFlightInfoSmart(
-  flightNo: string,
+  flightNo: string | undefined,
   isDeparture?: boolean
 ): Promise<FlightInfo> {
-  const statsData = await fetchFlightInfo(flightNo);
-  if (statsData.info === true) return statsData;
+  if (!flightNo) return { info: false };
 
-  const fallbackData = await fetchFlightInfoFromTripCom(flightNo, isDeparture);
-  console.log('fallbackData: ', fallbackData);
-  if (fallbackData.info === true) return fallbackData;
+  const tripComData = await fetchFlightInfoFromTripCom(flightNo, isDeparture);
+  if (tripComData.info === true) return tripComData;
+
+  const statsData = await fetchFlightInfo(flightNo, isDeparture);
+  if (statsData.info === true) return statsData;
 
   return { info: false };
 }

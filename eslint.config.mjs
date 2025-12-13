@@ -29,7 +29,6 @@ export default [
         }
       ],
       semi: 'error',
-       'quotes': ['error', 'single'] ,
       'prefer-const': 'error',
       'no-console': 'warn',
       'no-promise-executor-return': 'error',

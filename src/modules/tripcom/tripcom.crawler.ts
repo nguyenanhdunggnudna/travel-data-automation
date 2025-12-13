@@ -15,6 +15,7 @@ import { BookingDetail } from './tripcom.types';
 import { fetchFlightInfoSmart } from '@modules/flight/flight';
 import { GoggleSheetService } from '@modules/google-sheet/google-sheet';
 import { GoogleService } from '@modules/google/google';
+import { LoggerService } from 'src/logger/logger';
 
 export class TripComCrawler {
   private isLoggedIn = false;
@@ -22,7 +23,8 @@ export class TripComCrawler {
   constructor(
     private readonly browser: BrowserService,
     private readonly googleSheet: GoggleSheetService,
-    private readonly googleService: GoogleService
+    private readonly googleService: GoogleService,
+    private readonly loggerService: LoggerService
   ) {}
 
   initTripComBrowser(): Promise<Page> {
@@ -274,7 +276,6 @@ export class TripComCrawler {
         }
       }
 
-      // Lấy Preferred Message App
       const messageLabel = Array.from(
         document.querySelectorAll('span.info_left')
       ).find((el: Element) =>
@@ -326,26 +327,76 @@ export class TripComCrawler {
     };
   }
 
-  async runCrawlTripCom(orderIds: string[], page: Page): Promise<void> {
-    let flightInfo;
-    for (const orderId of orderIds) {
-      const detail = await this.crawlBookingDetail(page, orderId);
+  async buildTripcomBookingInfo(
+    detail: BookingDetail,
+    bookingDate: string
+  ): Promise<any[]> {
+    const result = [];
 
-      if (detail.flightNo) {
-        const isDeparture = detail.departure === 'Departure';
-        flightInfo = await fetchFlightInfoSmart(detail.flightNo, isDeparture);
-      }
+    const common = {
+      orderId: detail.orderId,
+      fullName: detail.fullName,
+      name: detail.name,
+      dateOfUse: detail.dateOfUse,
+      adults: detail.adults,
+      children: detail.children,
+      serviceType: detail.serviceType,
+      contact: `="${detail.contact}"`,
+      bookingDate
+    };
 
-      const googleAuth = await this.googleService.authorize();
+    // Arrival
+    if (detail.arrival === 'Arrival') {
+      const flightInfo = await fetchFlightInfoSmart(detail.flightNo, false);
 
+      result.push({
+        ...common,
+        flightNo: detail.flightNo,
+        arrival: 'Arrival',
+        departure: '',
+        airport: flightInfo?.airport,
+        time: flightInfo?.time,
+        platform: 'TRIPCOM'
+      });
+    }
+
+    // Departure
+    if (detail.departure === 'Departure') {
+      const flightInfo = await fetchFlightInfoSmart(detail.flightNo, true);
+
+      result.push({
+        ...common,
+        flightNo: detail.flightNo,
+        arrival: '',
+        departure: 'Departure',
+        airport: flightInfo?.airport,
+        time: flightInfo?.time,
+        platform: 'TRIPCOM'
+      });
+    }
+
+    return result;
+  }
+
+  async runCrawlTripCom(
+    orderId: string,
+    page: Page,
+    bookingDate: string
+  ): Promise<void> {
+    const googleAuth = await this.googleService.authorize();
+
+    this.loggerService.info(`Crawling order ${orderId}`);
+
+    const detail = await this.crawlBookingDetail(page, orderId);
+
+    const records = await this.buildTripcomBookingInfo(detail, bookingDate);
+
+    for (const r of records) {
       await this.googleSheet.appendToGoogleSheet(
         googleAuth,
-        {
-          ...detail,
-          airport: flightInfo?.airport,
-          time: flightInfo?.time
-        },
-        process.env.GOOGLE_SHEET_ID
+        r,
+        process.env.GOOGLE_SHEET_ID,
+        'kpeople@'
       );
     }
   }

@@ -13,10 +13,12 @@ export class GoogleService {
   ];
 
   getNewToken(oAuth2Client: OAuth2Client): Promise<OAuth2Client> {
-    oAuth2Client.generateAuthUrl({
+    const url = oAuth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: this.SCOPES
     });
+
+    console.log('Authorize this app by visiting this url:', url);
 
     const rl = readline.createInterface({
       input: process.stdin,
