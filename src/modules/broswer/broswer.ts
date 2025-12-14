@@ -11,6 +11,7 @@ export class BrowserService {
 
     this.browser = await puppeteer.launch({
       headless: headless,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
