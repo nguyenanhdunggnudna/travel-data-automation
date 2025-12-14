@@ -64,6 +64,8 @@ COPY credentials ./credentials
 # 9. Copy .env file (nếu bạn dùng)
 COPY .env .env
 
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+
 # 10. Build project
 RUN npm run build
 
