@@ -14,8 +14,9 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@modules/*": ["./src/modules/*"],
-      "@utils/*": ["./src/utils/*"]
+      "src/*": ["src/*"],
+      "@modules/*": ["src/modules/*"],
+      "@utils/*": ["src/utils/*"]
     },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,

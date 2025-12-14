@@ -5,12 +5,20 @@ import fs from 'fs';
 import { google } from 'googleapis';
 
 export class GoogleService {
-  CREDENTIALS_PATH = path.join(__dirname, 'credentials.json');
-  TOKEN_PATH = path.join(__dirname, 'token.json');
+  CREDENTIALS_PATH: string;
+  TOKEN_PATH: string;
   SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/spreadsheets'
   ];
+
+  constructor(platformName: string) {
+    this.CREDENTIALS_PATH = path.join(
+      __dirname,
+      `credentials_${platformName}.json`
+    );
+    this.TOKEN_PATH = path.join(__dirname, `token_${platformName}.json`);
+  }
 
   getNewToken(oAuth2Client: OAuth2Client): Promise<OAuth2Client> {
     const url = oAuth2Client.generateAuthUrl({
@@ -18,37 +26,33 @@ export class GoogleService {
       scope: this.SCOPES
     });
 
-    console.log('Authorize this app by visiting this url:', url);
+    console.log(
+      `[${this.TOKEN_PATH}] Authorize this app by visiting this url:`,
+      url
+    );
 
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout
     });
 
-    return new Promise<OAuth2Client>(
-      (
-        resolve: (value: OAuth2Client | PromiseLike<OAuth2Client>) => void,
-        reject: (reason?: unknown) => void
-      ) => {
-        rl.question(
-          'Enter the code from that page here: ',
-          async (code: string) => {
-            rl.close();
-
-            try {
-              const { tokens } = await oAuth2Client.getToken(code);
-              oAuth2Client.setCredentials(tokens);
-
-              fs.writeFileSync(this.TOKEN_PATH, JSON.stringify(tokens));
-
-              resolve(oAuth2Client);
-            } catch (err) {
-              reject(err);
-            }
+    // eslint-disable-next-line @typescript-eslint/typedef
+    return new Promise<OAuth2Client>((resolve, reject) => {
+      rl.question(
+        'Enter the code from that page here: ',
+        async (code: string) => {
+          rl.close();
+          try {
+            const { tokens } = await oAuth2Client.getToken(code);
+            oAuth2Client.setCredentials(tokens);
+            fs.writeFileSync(this.TOKEN_PATH, JSON.stringify(tokens));
+            resolve(oAuth2Client);
+          } catch (err) {
+            reject(err);
           }
-        );
-      }
-    );
+        }
+      );
+    });
   }
 
   authorize(): OAuth2Client | Promise<OAuth2Client> {

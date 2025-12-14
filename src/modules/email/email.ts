@@ -11,11 +11,12 @@ export interface MailItem {
 }
 export class EmailService {
   constructor(
-    private readonly googleService: GoogleService,
+    private readonly kkDayGoogleService: GoogleService,
+    private readonly tripComGoogleService: GoogleService,
     private readonly loggerService: LoggerService
   ) {}
   async getAllTripComOrderIds(): Promise<MailItem[]> {
-    const auth = await this.googleService.authorize();
+    const auth = await this.tripComGoogleService.authorize();
     const gmail = google.gmail({ version: 'v1', auth });
 
     const resList = await gmail.users.messages.list({
@@ -65,7 +66,7 @@ export class EmailService {
   }
 
   async getAllKKdayOrderIds(): Promise<MailItem[]> {
-    const auth = await this.googleService.authorize();
+    const auth = await this.kkDayGoogleService.authorize();
     const gmail = google.gmail({ version: 'v1', auth });
 
     const resList = await gmail.users.messages.list({

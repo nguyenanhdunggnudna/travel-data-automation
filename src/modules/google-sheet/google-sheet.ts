@@ -5,6 +5,28 @@ import { BookingDetail } from '@modules/tripcom/tripcom.types';
 import { PLATFORM } from 'src/config/platform/platform.constant';
 
 export class GoggleSheetService {
+  private normalizeDate = (input?: string): string => {
+    if (!input) return '';
+
+    // yyyy-mm-dd or yyyy-mm-dd HH:mm
+    if (input.includes('-')) {
+      return input.split(' ')[0];
+    }
+
+    // dd/MM/yyyy
+    if (input.includes('/')) {
+      const [dd, mm, yyyy] = input.split('/');
+      if (yyyy) return `${yyyy}-${mm}-${dd}`;
+    }
+
+    return '';
+  };
+
+  private todayVN = (): string =>
+    new Date().toLocaleDateString('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh'
+    });
+
   async appendToGoogleSheet(
     auth: OAuth2Client,
     detail: BookingDetail,
@@ -21,13 +43,26 @@ export class GoggleSheetService {
 
       const service = detail.departure ? 'SEEOFF' : 'FAST TRACK';
 
+      const prices = detail.prices || {};
+
+      const priceVND = prices['VND'] ?? '';
+      const priceUSD = prices['USD'] ?? '';
+      const priceKRW = prices['KRW'] ?? '';
+
+      const bookingDay = this.normalizeDate(detail.bookingDate);
+      const useDay = this.normalizeDate(detail.dateOfUse);
+      const today = this.todayVN();
+
+      const urgent =
+        bookingDay && useDay && bookingDay === useDay && bookingDay === today
+          ? '🚨 URGENT'
+          : '';
+
       const time =
         detail.time || formatTime(detail.flightInfo?.departureTimeScheduled);
 
       if (detail.dateOfUse) {
         let parts: string[] = [];
-        console.log('detail.dateOfUse: ', detail.dateOfUse);
-
         if (detail.dateOfUse.includes('-')) {
           parts = detail.dateOfUse.split('-'); // 2025-12-26
           if (parts.length === 3) {
@@ -39,8 +74,9 @@ export class GoggleSheetService {
             dateOfUse = `${parts[0]}/${parts[1]}`; // dd/MM
           }
         }
-        console.log('dateOfUse: ', dateOfUse);
       }
+
+      const nameInline = (detail.name || '').replace(/\s*\n\s*/g, ' ').trim();
 
       const row = [
         dateOfUse,
@@ -60,8 +96,12 @@ export class GoggleSheetService {
         detail.departure,
         detail.serviceType || '',
         detail.bookingDate,
-        `${service} / ${detail.dateOfUse} / ${time} / ${detail.flightNo}`,
-        mail
+        `${service} ${detail.serviceType ? 'PRE' : ''} / ${dateOfUse} / ${detail.flightNo} / ${time} / ${detail.adults ? `${detail.adults}NL` : ''} ${detail.children ? `+ ${detail.children}TE` : ''} / ${detail.airport} / ${nameInline}`,
+        priceVND,
+        priceUSD,
+        priceKRW,
+        mail,
+        urgent
       ];
 
       const res = await sheets.spreadsheets.values.append({

@@ -335,7 +335,8 @@ export class KKdayCrawler {
         name: '',
         dateOfUse: '',
         adults: '',
-        child: ''
+        child: '',
+        prices: {} as Record<string, number>
       };
 
       const airlineSection = document.querySelector('#info_type3');
@@ -443,6 +444,22 @@ export class KKdayCrawler {
         }
       });
 
+      // PRICE
+      const priceEls = document.querySelectorAll('.widget-price');
+
+      priceEls.forEach((el: Element) => {
+        const txt = el.textContent?.trim() ?? '';
+        // ví dụ: "VND 1,147,500.00" hoặc "USD 48.00"
+
+        const match = txt.match(/([A-Z]{3})\s*([\d,]+(?:\.\d+)?)/);
+        if (!match) return;
+
+        const currency = match[1];
+        const amount = Number(match[2].replace(/,/g, ''));
+
+        result.prices[currency] = amount;
+      });
+
       return result;
     }, bookingId);
   }
@@ -461,7 +478,8 @@ export class KKdayCrawler {
       children: flightDetail.child,
       contact: `="${flightDetail.contact}"`,
       serviceType: flightDetail.serviceType,
-      bookingDate
+      bookingDate,
+      prices: flightDetail.prices
     };
 
     if (flightDetail.arrival?.flightNo) {

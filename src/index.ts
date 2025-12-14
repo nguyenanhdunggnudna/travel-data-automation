@@ -1,29 +1,74 @@
+import 'dotenv/config';
+
+import cron, { ScheduledTask } from 'node-cron';
+
 import { BrowserService } from '@modules/broswer/broswer';
 import { EmailService } from '@modules/email/email';
 import { GoggleSheetService } from '@modules/google-sheet/google-sheet';
 import { GoogleService } from '@modules/google/google';
 import { KKdayCrawler } from '@modules/kkday/kkday.crawler';
 import { TripComCrawler } from '@modules/tripcom/tripcom.crawler';
-import 'dotenv/config';
-import cron from 'node-cron';
-import { LoggerService } from './logger/logger';
 import { LabelService } from '@modules/google/gmail-label';
 
-const googleSheet = new GoggleSheetService();
-const googleService = new GoogleService();
-const browserKKdayService = new BrowserService();
-const browserTripComService = new BrowserService();
+import { LoggerService } from './logger/logger';
+import { PLATFORM } from './config/platform/platform.constant';
+
+/* =======================
+   BOOT LOG
+======================= */
+console.log('🚀 Travel Data Automation STARTED', new Date().toISOString());
+
+/* =======================
+   SERVICES
+======================= */
 const loggerService = new LoggerService();
 
-const emailService = new EmailService(googleService, loggerService);
+const googleSheet = new GoggleSheetService();
 
+const kkdayGoogleService = new GoogleService(PLATFORM.KKDAY);
+const tripComGoogleService = new GoogleService(PLATFORM.TRIP_COM);
+
+const browserKKdayService = new BrowserService();
+const browserTripComService = new BrowserService();
+
+const emailService = new EmailService(
+  kkdayGoogleService,
+  tripComGoogleService,
+  loggerService
+);
+
+/* =======================
+   STATE
+======================= */
+const processedKKday = new Set<string>();
+const processingKKday = new Set<string>();
+
+const processedTrip = new Set<string>();
+const processingTrip = new Set<string>();
+
+/* =======================
+   CRON HOLDERS
+======================= */
+let loginJob: ScheduledTask;
+let crawlJob: ScheduledTask;
+
+/* =======================
+   MAIN
+======================= */
 async function main(): Promise<void> {
-  const auth = await googleService.authorize();
-  const labelService = new LabelService(auth);
+  loggerService.info('Init services...');
 
+  /* ---------- AUTH ---------- */
+  const kkdayAuth = await kkdayGoogleService.authorize();
+  const tripComAuth = await tripComGoogleService.authorize();
+
+  const labelKKDayService = new LabelService(kkdayAuth);
+  const labelTripcomService = new LabelService(tripComAuth);
+
+  /* ---------- CRAWLERS ---------- */
   const kkdayCrawler = new KKdayCrawler(
     googleSheet,
-    googleService,
+    kkdayGoogleService,
     browserKKdayService,
     loggerService
   );
@@ -31,51 +76,66 @@ async function main(): Promise<void> {
   const tripComCrawler = new TripComCrawler(
     browserTripComService,
     googleSheet,
-    googleService,
+    tripComGoogleService,
     loggerService
   );
 
+  /* ---------- INIT BROWSERS ---------- */
   const tripcomPage = await tripComCrawler.initTripComBrowser();
   await tripComCrawler.loginIfNeeded(tripcomPage);
 
   const kkdayPage = await kkdayCrawler.initBrowser();
-
   await kkdayCrawler.runLoginFlow(
-    'timehouse0915@gmail.com',
-    'Vietnamkpeople0915!',
+    process.env.KKDAY_EMAIL!,
+    process.env.KKDAY_PASSWORD!,
     kkdayPage
   );
 
-  const PENDING_LABEL_ID = await labelService.getOrCreateLabel('PENDING');
-  const DONE_LABEL_ID = await labelService.getOrCreateLabel('DONE');
-  const FAILED_LABEL_ID = await labelService.getOrCreateLabel('FAILED');
+  /* ---------- LABELS ---------- */
+  const KKDAY_PENDING = await labelKKDayService.getOrCreateLabel('PENDING');
+  const KKDAY_DONE = await labelKKDayService.getOrCreateLabel('DONE');
+  const KKDAY_FAILED = await labelKKDayService.getOrCreateLabel('FAILED');
 
-  // Login lại sau mỗi 30 phút
-  cron.schedule('0 */30 * * * *', async () => {
-    await kkdayCrawler.runLoginFlow(
-      'timehouse0915@gmail.com',
-      'Vietnamkpeople0915!',
-      kkdayPage
-    );
+  const TRIP_PENDING = await labelTripcomService.getOrCreateLabel('PENDING');
+  const TRIP_DONE = await labelTripcomService.getOrCreateLabel('DONE');
+  const TRIP_FAILED = await labelTripcomService.getOrCreateLabel('FAILED');
+
+  /* =======================
+     CRON: LOGIN LẠI 30 PHÚT
+  ======================= */
+  loginJob = cron.schedule('0 */30 * * * *', async () => {
+    try {
+      loggerService.info('⏰ Re-login KKday');
+      await kkdayCrawler.runLoginFlow(
+        process.env.KKDAY_EMAIL!,
+        process.env.KKDAY_PASSWORD!,
+        kkdayPage
+      );
+    } catch (err) {
+      loggerService.error(`Re-login failed: ${err}`);
+    }
   });
 
-  const processedMessageIds = new Set<string>(); // Lưu tất cả messageId đã DONE hoặc FAILED
-  const processingSet = new Set<string>(); // Lưu messageId đang xử lý
+  /* =======================
+     CRON: CRAWL 3 PHÚT
+  ======================= */
+  crawlJob = cron.schedule('0 */3 * * * *', async () => {
+    loggerService.info('⏰ Crawl cron triggered');
 
-  cron.schedule('*/30 * * * * *', async () => {
     try {
-      // --- TripCom ---
-      const mails = await emailService.getAllTripComOrderIds();
+      /* ---------- TripCom ---------- */
+      const tripMails = await emailService.getAllTripComOrderIds();
+      loggerService.info(`TripCom mails: ${tripMails.length}`);
 
-      for (const mail of mails) {
+      for (const mail of tripMails) {
         if (
-          processedMessageIds.has(mail.messageId) ||
-          processingSet.has(mail.messageId)
+          processedTrip.has(mail.messageId) ||
+          processingTrip.has(mail.messageId)
         )
           continue;
-        processingSet.add(mail.messageId);
 
-        await labelService.addLabel(mail.messageId, PENDING_LABEL_ID);
+        processingTrip.add(mail.messageId);
+        await labelTripcomService.addLabel(mail.messageId, TRIP_PENDING);
 
         try {
           await tripComCrawler.runCrawlTripCom(
@@ -84,37 +144,33 @@ async function main(): Promise<void> {
             mail.receivedAt
           );
 
-          await labelService.removeLabel(mail.messageId, PENDING_LABEL_ID);
-          await labelService.addLabel(mail.messageId, DONE_LABEL_ID);
+          await labelTripcomService.removeLabel(mail.messageId, TRIP_PENDING);
+          await labelTripcomService.addLabel(mail.messageId, TRIP_DONE);
 
-          processedMessageIds.add(mail.messageId); // Đánh dấu DONE
+          processedTrip.add(mail.messageId);
         } catch (err) {
-          loggerService.error(
-            `TripCom crawl failed | orderId=${mail.orderId} | ${err}`
-          );
+          loggerService.error(`TripCom failed | ${err}`);
 
-          await labelService.removeLabel(mail.messageId, PENDING_LABEL_ID);
-          await labelService.addLabel(mail.messageId, FAILED_LABEL_ID);
-
-          processedMessageIds.add(mail.messageId); // Đánh dấu FAILED
+          await labelTripcomService.removeLabel(mail.messageId, TRIP_PENDING);
+          await labelTripcomService.addLabel(mail.messageId, TRIP_FAILED);
         } finally {
-          processingSet.delete(mail.messageId);
+          processingTrip.delete(mail.messageId);
         }
       }
 
-      // --- KKday ---
+      /* ---------- KKday ---------- */
       const kkdayMails = await emailService.getAllKKdayOrderIds();
-      console.log('KKday mails: ', kkdayMails);
+      loggerService.info(`KKday mails: ${kkdayMails.length}`);
 
       for (const mail of kkdayMails) {
         if (
-          processedMessageIds.has(mail.messageId) ||
-          processingSet.has(mail.messageId)
+          processedKKday.has(mail.messageId) ||
+          processingKKday.has(mail.messageId)
         )
           continue;
-        processingSet.add(mail.messageId);
 
-        await labelService.addLabel(mail.messageId, PENDING_LABEL_ID);
+        processingKKday.add(mail.messageId);
+        await labelKKDayService.addLabel(mail.messageId, KKDAY_PENDING);
 
         try {
           await kkdayCrawler.kkdayCrawl(
@@ -123,28 +179,42 @@ async function main(): Promise<void> {
             mail.receivedAt
           );
 
-          await labelService.removeLabel(mail.messageId, PENDING_LABEL_ID);
-          await labelService.addLabel(mail.messageId, DONE_LABEL_ID);
+          await labelKKDayService.removeLabel(mail.messageId, KKDAY_PENDING);
+          await labelKKDayService.addLabel(mail.messageId, KKDAY_DONE);
 
-          processedMessageIds.add(mail.messageId);
+          processedKKday.add(mail.messageId);
         } catch (err) {
-          loggerService.error(
-            `KKday crawl failed | orderId=${mail.orderId} | ${err}`
-          );
-          await labelService.removeLabel(mail.messageId, PENDING_LABEL_ID);
-          await labelService.addLabel(mail.messageId, FAILED_LABEL_ID);
+          loggerService.error(`KKday failed | ${err}`);
 
-          processedMessageIds.add(mail.messageId);
+          await labelKKDayService.removeLabel(mail.messageId, KKDAY_PENDING);
+          await labelKKDayService.addLabel(mail.messageId, KKDAY_FAILED);
         } finally {
-          processingSet.delete(mail.messageId);
+          processingKKday.delete(mail.messageId);
         }
       }
     } catch (err) {
-      loggerService.error(`Cronjob error: ${err}`);
+      loggerService.error(`Cron error: ${err}`);
     }
   });
+
+  /* ---------- START CRONS ---------- */
+  loginJob.start();
+  crawlJob.start();
+
+  loggerService.info('✅ Cron jobs started');
+
+  /* =======================
+     KEEP PROCESS ALIVE (BẢO HIỂM)
+  ======================= */
+  setInterval(() => {
+    loggerService.error('🫀 Process alive');
+  }, 60_000);
 }
 
+/* =======================
+   BOOT
+======================= */
 main().catch((err: Error) => {
-  loggerService.error(`Crash app: ${err}`);
+  loggerService.error(`❌ App crashed: ${err}`);
+  process.exit(1);
 });

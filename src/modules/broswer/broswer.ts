@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import puppeteer, { Browser, Page, Cookie, Frame } from 'puppeteer';
+import puppeteer, { Browser, Page, Cookie } from 'puppeteer';
 import { PLATFORM } from 'src/config/platform/platform.constant';
 
 export class BrowserService {
