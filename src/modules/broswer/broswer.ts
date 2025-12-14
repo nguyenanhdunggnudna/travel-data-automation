@@ -11,7 +11,15 @@ export class BrowserService {
 
     this.browser = await puppeteer.launch({
       headless: headless,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ]
     });
 
     return this.browser;
