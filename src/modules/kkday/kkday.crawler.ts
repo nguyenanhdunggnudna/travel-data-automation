@@ -59,7 +59,7 @@ interface FinalRecord {
 export class KKdayCrawler {
   private cookiePath = path.join(
     process.cwd(),
-    '/cookies/kkday/kkday_cookies.json'
+    'cookies/kkday/kkday_cookies.json'
   );
   private kkdayPage: Page | null = null;
 
@@ -77,6 +77,9 @@ export class KKdayCrawler {
 
   async saveCookies(page: Page): Promise<void> {
     const cookies = await page.cookies();
+
+    const dir = path.dirname(this.cookiePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
     fs.writeFileSync(this.cookiePath, JSON.stringify(cookies, null, 2));
   }

@@ -13,11 +13,16 @@ export class GoogleService {
   ];
 
   constructor(platformName: string) {
-    this.CREDENTIALS_PATH = path.join(
-      __dirname,
-      `credentials_${platformName}.json`
-    );
-    this.TOKEN_PATH = path.join(__dirname, `token_${platformName}.json`);
+    this.CREDENTIALS_PATH =
+      process.env[`GOOGLE_CREDENTIALS_${platformName}`] ??
+      path.resolve(
+        process.cwd(),
+        `credentials/credentials_${platformName}.json`
+      );
+
+    this.TOKEN_PATH =
+      process.env[`GOOGLE_TOKEN_${platformName}`] ??
+      path.resolve(process.cwd(), `credentials/token_${platformName}.json`);
   }
 
   getNewToken(oAuth2Client: OAuth2Client): Promise<OAuth2Client> {
