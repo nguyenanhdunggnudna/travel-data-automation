@@ -311,27 +311,26 @@ export class TripComCrawler {
       return dateCell?.textContent?.trim() || '';
     });
 
-    const prices = await page.evaluate(() => {
-      const result: Record<string, number> = {};
+    const prices = await page.$$eval(
+      '.ant-table-tbody tr td:nth-child(8) div div',
+      // eslint-disable-next-line @typescript-eslint/typedef
+      (priceDivs) => {
+        const result: Record<string, number> = {};
+        const regex = /([A-Z]{3})\s([\d,.]+)/g;
 
-      const priceCell = document.querySelector(
-        '.ant-table-tbody tr td:nth-child(8) div div'
-      );
+        priceDivs.forEach((div: HTMLDivElement) => {
+          const text = div.textContent || '';
+          let match;
+          while ((match = regex.exec(text)) !== null) {
+            const currency = match[1];
+            const amount = Number(match[2].replace(/,/g, ''));
+            result[currency] = amount;
+          }
+        });
 
-      if (!priceCell) return result;
-
-      const text = priceCell.textContent || '';
-      const regex = /([A-Z]{3})\s([\d,.]+)/g;
-
-      let match;
-      while ((match = regex.exec(text)) !== null) {
-        const currency = match[1];
-        const amount = Number(match[2].replace(/,/g, ''));
-        result[currency] = amount;
+        return result;
       }
-
-      return result;
-    });
+    );
 
     return {
       orderId,
