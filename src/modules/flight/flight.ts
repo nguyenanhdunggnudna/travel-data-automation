@@ -2,6 +2,42 @@ import { FlightInfo } from '@modules/tripcom/tripcom.types';
 
 import puppeteer, { Browser, Page } from 'puppeteer';
 
+export const VN_AIRPORTS = new Set([
+  // Miền Bắc
+  'HAN', // Hà Nội – Nội Bài
+  'HPH', // Hải Phòng – Cát Bi
+  'DIN', // Điện Biên
+  'THD', // Thanh Hóa – Thọ Xuân
+  'VDO', // Vân Đồn (Quảng Ninh)
+
+  // Miền Trung
+  'VII', // Vinh
+  'HUI', // Huế – Phú Bài
+  'DAD', // Đà Nẵng
+  'PXU', // Pleiku
+  'TBB', // Tuy Hòa
+  'CXR', // Cam Ranh (Nha Trang)
+  'UIH', // Phù Cát (Quy Nhơn)
+
+  // Tây Nguyên
+  'BMV', // Buôn Ma Thuột
+  'DLI', // Liên Khương (Đà Lạt)
+
+  // Miền Nam
+  'SGN', // TP.HCM – Tân Sơn Nhất
+  'VCA', // Cần Thơ
+  'PQC', // Phú Quốc
+  'VKG', // Rạch Giá
+  'CAH', // Cà Mau
+  'VCS' // Côn Đảo
+]);
+
+function pickVietnamAirport(from: string, to: string): string {
+  if (VN_AIRPORTS.has(from)) return from;
+  if (VN_AIRPORTS.has(to)) return to;
+  return from; // fallback
+}
+
 async function getIataCode(airlineName: string): Promise<string | null> {
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
@@ -125,15 +161,17 @@ async function fetchFlightInfo(
     const depTime = data.departureTimeScheduled || '';
     const arrTime = data.arrivalTimeScheduled || '';
 
+    const airportVN = pickVietnamAirport(fromCode, toCode);
+
     return isDeparture
       ? {
           info: true,
-          airport: fromCode, // Sân bay đi
+          airport: airportVN, // Sân bay đi
           time: depTime // Giờ bay
         }
       : {
           info: true,
-          airport: toCode, // Sân bay đến
+          airport: airportVN, // Sân bay đến
           time: arrTime // Giờ đến
         };
   } catch (err) {
@@ -266,15 +304,17 @@ async function fetchFlightInfoFromTripCom(
 
     const arrivalTime = data.arrivalTimeReal || data.arrivalTimeScheduled || '';
 
+    const airportVN = pickVietnamAirport(routeFromCode, routeToCode);
+
     return isDeparture
       ? {
           info: true,
-          airport: routeFromCode, // Sân bay đi
+          airport: airportVN, // Sân bay đi
           time: departureTime // Giờ khởi hành
         }
       : {
           info: true,
-          airport: routeToCode, // Sân bay đến
+          airport: airportVN, // Sân bay đến
           time: arrivalTime // Giờ hạ cánh
         };
   } catch (err) {
@@ -287,13 +327,20 @@ export async function fetchFlightInfoSmart(
   flightNo: string | undefined,
   isDeparture?: boolean
 ): Promise<FlightInfo> {
+  console.log('Flight no nhận được từ các nền tảng: ', flightNo);
   if (!flightNo) return { info: false };
 
   const tripComData = await fetchFlightInfoFromTripCom(flightNo, isDeparture);
-  if (tripComData.info === true) return tripComData;
+  if (tripComData.info === true) {
+    console.log('thông tin bay từ trip com: ', tripComData);
+    return tripComData;
+  }
 
   const statsData = await fetchFlightInfo(flightNo, isDeparture);
-  if (statsData.info === true) return statsData;
+  if (statsData.info === true) {
+    console.log('thông tin bay từ fetch Flight Info: ', statsData);
+    return statsData;
+  }
 
   return { info: false };
 }

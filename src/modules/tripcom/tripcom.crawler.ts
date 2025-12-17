@@ -313,8 +313,7 @@ export class TripComCrawler {
 
     const prices = await page.$$eval(
       '.ant-table-tbody tr td:nth-child(8) div div',
-      // eslint-disable-next-line @typescript-eslint/typedef
-      (priceDivs) => {
+      (priceDivs: HTMLDivElement[]) => {
         const result: Record<string, number> = {};
         const regex = /([A-Z]{3})\s([\d,.]+)/g;
 
@@ -352,7 +351,7 @@ export class TripComCrawler {
   async buildTripcomBookingInfo(
     detail: BookingDetail,
     bookingDate: string
-  ): Promise<any[]> {
+  ): Promise<BookingDetail[]> {
     const result = [];
 
     const common = {
@@ -368,7 +367,6 @@ export class TripComCrawler {
       prices: detail.prices
     };
 
-    // Arrival
     if (detail.arrival === 'Arrival') {
       const flightInfo = await fetchFlightInfoSmart(detail.flightNo, false);
 
@@ -383,7 +381,6 @@ export class TripComCrawler {
       });
     }
 
-    // Departure
     if (detail.departure === 'Departure') {
       const flightInfo = await fetchFlightInfoSmart(detail.flightNo, true);
 
@@ -407,8 +404,6 @@ export class TripComCrawler {
     bookingDate: string
   ): Promise<void> {
     const googleAuth = await this.googleService.authorize();
-
-    this.loggerService.info(`Crawling order ${orderId}`);
 
     const detail = await this.crawlBookingDetail(page, orderId);
 

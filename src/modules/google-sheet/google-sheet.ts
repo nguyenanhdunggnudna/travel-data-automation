@@ -27,14 +27,29 @@ export class GoggleSheetService {
       timeZone: 'Asia/Ho_Chi_Minh'
     });
 
+  private async getSheetHeaders(
+    sheets: any,
+    sheetId: string
+  ): Promise<string[]> {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: 'Sheet1!1:1'
+    });
+
+    return (res.data.values?.[0] || []).map((h: any) =>
+      h.toString().trim().toUpperCase()
+    );
+  }
+
   async appendToGoogleSheet(
     auth: OAuth2Client,
     detail: BookingDetail,
     sheetId: string = process.env.GOOGLE_SHEET_ID || '',
-    mail: string
+    mail?: string
   ): Promise<void> {
     try {
       let dateOfUse = '';
+
       const sheets = google.sheets({ version: 'v4', auth });
 
       const formatTime = (time?: string): string => time?.split(' ')[0] ?? '';
@@ -61,6 +76,15 @@ export class GoggleSheetService {
       const time =
         detail.time || formatTime(detail.flightInfo?.departureTimeScheduled);
 
+      const serviceLabel = detail.serviceType ? `${service} PRE` : service;
+
+      const pax =
+        detail.adults || detail.children
+          ? `${detail.adults ? `${detail.adults}NL` : ''}${
+              detail.children ? ` +${detail.children}TE` : ''
+            }`
+          : '';
+
       if (detail.dateOfUse) {
         let parts: string[] = [];
         if (detail.dateOfUse.includes('-')) {
@@ -78,33 +102,78 @@ export class GoggleSheetService {
 
       const nameInline = (detail.name || '').replace(/\s*\n\s*/g, ' ').trim();
 
-      const row = [
+      const summaryParts = [
+        serviceLabel,
         dateOfUse,
         detail.flightNo,
         time,
-        detail.adults,
-        detail.children || 0,
+        pax,
         detail.airport,
-        detail.platform || PLATFORM.TRIP_COM,
-        detail.orderId,
-        detail.name,
-        detail.contact || '',
-        service,
-        flightMissingFlag,
-        '',
-        detail.arrival,
-        detail.departure,
-        detail.serviceType || '',
-        detail.bookingDate,
-        `${service} ${detail.serviceType ? 'PRE' : ''} / ${dateOfUse} / ${detail.flightNo} / ${time} / ${detail.adults ? `${detail.adults}NL` : ''} ${detail.children ? `+ ${detail.children}TE` : ''} / ${detail.airport} / ${nameInline}`,
-        priceVND,
-        priceUSD,
-        priceKRW,
-        mail,
-        urgent
-      ];
+        nameInline
+      ].filter(
+        (v: string | undefined): v is string =>
+          typeof v === 'string' && v.trim() !== ''
+      );
 
-      const res = await sheets.spreadsheets.values.append({
+      const summary = summaryParts.join('/ ');
+
+      const headers = await this.getSheetHeaders(sheets, sheetId);
+
+      const dataMap: Record<string, any> = {
+        PREMIUM: detail.serviceType ? 'PRE' : '',
+
+        'DATE OF USE': dateOfUse,
+
+        URGENT: urgent,
+
+        FLIGHT: detail.flightNo,
+
+        TIME: time,
+
+        'FLIGHT MISSING': flightMissingFlag,
+
+        ADULT: detail.adults,
+
+        CHILD: detail.children || 0,
+
+        SERVICE: service,
+
+        AIRPORT: detail.airport,
+
+        'FLATFORMS (BOOKING)': detail.platform || PLATFORM.TRIP_COM,
+
+        'ID BOOKING': `'${detail.orderId}`,
+
+        NAME: detail.name,
+
+        CONTACT: detail.contact || '',
+
+        CHECK: '',
+
+        NOTE: '',
+
+        CANCELLED: '',
+
+        ARRIVAL: detail.arrival,
+
+        DEPARTURE: detail.departure,
+
+        'BOOKING DATE': detail.bookingDate,
+
+        SUMMARY: summary,
+
+        VND: priceVND,
+
+        USD: priceUSD,
+
+        KWR: priceKRW,
+
+        MAIL: mail
+      };
+
+      const row = headers.map((h: any) => dataMap[h] ?? '');
+
+      await sheets.spreadsheets.values.append({
         spreadsheetId: sheetId,
         range: 'Sheet1!A:Z',
         valueInputOption: 'USER_ENTERED',
@@ -112,55 +181,6 @@ export class GoggleSheetService {
           values: [row]
         }
       });
-
-      const updatedRange = res.data.updates?.updatedRange;
-
-      if (!updatedRange) return;
-
-      const hasArrival = detail.arrival === 'Arrival';
-      const hasDeparture = detail.departure === 'Departure';
-
-      if (!(hasArrival || hasDeparture)) return;
-
-      const read = await sheets.spreadsheets.values.get({
-        spreadsheetId: sheetId,
-        range: 'Sheet1!A:Z'
-      });
-
-      const rows = read.data.values || [];
-
-      const matchedRows: any = [];
-      // eslint-disable-next-line @typescript-eslint/typedef
-      rows.forEach((r, idx) => {
-        if (r[9] === detail.orderId) {
-          matchedRows.push(idx + 1);
-        }
-      });
-
-      if (matchedRows.length >= 2) {
-        const requests = matchedRows.map((r: any) => ({
-          repeatCell: {
-            range: {
-              sheetId: 0,
-              startRowIndex: r - 1,
-              endRowIndex: r,
-              startColumnIndex: 0,
-              endColumnIndex: 16
-            },
-            cell: {
-              userEnteredFormat: {
-                backgroundColor: { red: 1, green: 0.95, blue: 0.6 }
-              }
-            },
-            fields: 'userEnteredFormat.backgroundColor'
-          }
-        }));
-
-        await sheets.spreadsheets.batchUpdate({
-          spreadsheetId: sheetId,
-          requestBody: { requests }
-        });
-      }
     } catch (error) {
       throw new Error(`Error appending to Google Sheet: ${error}`);
     }

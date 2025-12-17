@@ -13,14 +13,6 @@ import { LabelService } from '@modules/google/gmail-label';
 import { LoggerService } from './logger/logger';
 import { PLATFORM } from './config/platform/platform.constant';
 
-/* =======================
-   BOOT LOG
-======================= */
-console.log('🚀 Travel Data Automation STARTED', new Date().toISOString());
-
-/* =======================
-   SERVICES
-======================= */
 const loggerService = new LoggerService();
 
 const googleSheet = new GoggleSheetService();
@@ -37,35 +29,22 @@ const emailService = new EmailService(
   loggerService
 );
 
-/* =======================
-   STATE
-======================= */
 const processedKKday = new Set<string>();
 const processingKKday = new Set<string>();
 
 const processedTrip = new Set<string>();
 const processingTrip = new Set<string>();
 
-/* =======================
-   CRON HOLDERS
-======================= */
 let loginJob: ScheduledTask;
 let crawlJob: ScheduledTask;
 
-/* =======================
-   MAIN
-======================= */
 async function main(): Promise<void> {
-  loggerService.info('Init services...');
-
-  /* ---------- AUTH ---------- */
   const kkdayAuth = await kkdayGoogleService.authorize();
   const tripComAuth = await tripComGoogleService.authorize();
 
   const labelKKDayService = new LabelService(kkdayAuth);
   const labelTripcomService = new LabelService(tripComAuth);
 
-  /* ---------- CRAWLERS ---------- */
   const kkdayCrawler = new KKdayCrawler(
     googleSheet,
     kkdayGoogleService,
@@ -80,7 +59,6 @@ async function main(): Promise<void> {
     loggerService
   );
 
-  /* ---------- INIT BROWSERS ---------- */
   const tripcomPage = await tripComCrawler.initTripComBrowser();
   await tripComCrawler.loginIfNeeded(tripcomPage);
 
@@ -91,7 +69,6 @@ async function main(): Promise<void> {
     kkdayPage
   );
 
-  /* ---------- LABELS ---------- */
   const KKDAY_PENDING = await labelKKDayService.getOrCreateLabel('PENDING');
   const KKDAY_DONE = await labelKKDayService.getOrCreateLabel('DONE');
   const KKDAY_FAILED = await labelKKDayService.getOrCreateLabel('FAILED');
@@ -100,12 +77,8 @@ async function main(): Promise<void> {
   const TRIP_DONE = await labelTripcomService.getOrCreateLabel('DONE');
   const TRIP_FAILED = await labelTripcomService.getOrCreateLabel('FAILED');
 
-  /* =======================
-     CRON: LOGIN LẠI 30 PHÚT
-  ======================= */
   loginJob = cron.schedule('0 */30 * * * *', async () => {
     try {
-      loggerService.info('⏰ Re-login KKday');
       await kkdayCrawler.runLoginFlow(
         process.env.KKDAY_EMAIL!,
         process.env.KKDAY_PASSWORD!,
@@ -116,14 +89,8 @@ async function main(): Promise<void> {
     }
   });
 
-  /* =======================
-     CRON: CRAWL 3 PHÚT
-  ======================= */
   crawlJob = cron.schedule('0 */3 * * * *', async () => {
-    loggerService.info('⏰ Crawl cron triggered');
-
     try {
-      /* ---------- TripCom ---------- */
       const tripMails = await emailService.getAllTripComOrderIds();
       loggerService.info(`TripCom mails: ${tripMails.length}`);
 
@@ -152,15 +119,12 @@ async function main(): Promise<void> {
           loggerService.error(`TripCom failed | ${err}`);
 
           await labelTripcomService.removeLabel(mail.messageId, TRIP_PENDING);
-          await labelTripcomService.addLabel(mail.messageId, TRIP_FAILED);
         } finally {
           processingTrip.delete(mail.messageId);
         }
       }
 
-      /* ---------- KKday ---------- */
       const kkdayMails = await emailService.getAllKKdayOrderIds();
-      loggerService.info(`KKday mails: ${kkdayMails.length}`);
 
       for (const mail of kkdayMails) {
         if (
@@ -187,7 +151,6 @@ async function main(): Promise<void> {
           loggerService.error(`KKday failed | ${err}`);
 
           await labelKKDayService.removeLabel(mail.messageId, KKDAY_PENDING);
-          await labelKKDayService.addLabel(mail.messageId, KKDAY_FAILED);
         } finally {
           processingKKday.delete(mail.messageId);
         }
@@ -197,23 +160,14 @@ async function main(): Promise<void> {
     }
   });
 
-  /* ---------- START CRONS ---------- */
   loginJob.start();
   crawlJob.start();
 
-  loggerService.info('✅ Cron jobs started');
-
-  /* =======================
-     KEEP PROCESS ALIVE (BẢO HIỂM)
-  ======================= */
   setInterval(() => {
     loggerService.error('🫀 Process alive');
   }, 60_000);
 }
 
-/* =======================
-   BOOT
-======================= */
 main().catch((err: Error) => {
   loggerService.error(`❌ App crashed: ${err}`);
   process.exit(1);

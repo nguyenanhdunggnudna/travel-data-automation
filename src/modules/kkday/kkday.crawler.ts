@@ -1,7 +1,7 @@
 import { GoggleSheetService } from '@modules/google-sheet/google-sheet';
 import { GoogleService } from '@modules/google/google';
 import { BookingDetail } from '@modules/tripcom/tripcom.types';
-import { google } from 'googleapis';
+import { gmail_v1, google } from 'googleapis';
 import path from 'path';
 import fs from 'fs';
 
@@ -10,19 +10,6 @@ import { BrowserService } from '@modules/broswer/broswer';
 import { PLATFORM } from 'src/config/platform/platform.constant';
 import { fetchFlightInfoSmart } from '@modules/flight/flight';
 import { LoggerService } from 'src/logger/logger';
-
-interface BookingData {
-  bookingId: string;
-  productNumber: string;
-  product: string;
-  package: string;
-  option: string;
-  dateOfUse: string;
-  adults: number;
-  children: number;
-  leadTraveler: string;
-  nationality: string;
-}
 
 interface FlightDetail {
   bookingId: string;
@@ -61,7 +48,6 @@ export class KKdayCrawler {
     process.cwd(),
     'cookies/kkday/kkday_cookies.json'
   );
-  private kkdayPage: Page | null = null;
 
   constructor(
     private readonly googleSheet: GoggleSheetService,
@@ -104,7 +90,9 @@ export class KKdayCrawler {
     const loginBtn = await page.waitForSelector('#loginBtn', {
       visible: true
     });
-    if (!loginBtn) throw new Error('Không tìm thấy nút login trên trang KKDAY');
+    if (!loginBtn) {
+      throw new Error('Không tìm thấy nút login trên trang KKDAY');
+    }
 
     await loginBtn.click();
     await page.waitForNavigation({ waitUntil: 'networkidle2' });
@@ -226,8 +214,6 @@ export class KKdayCrawler {
     password: string,
     page: Page
   ): Promise<Page> {
-    this.kkdayPage = page;
-
     await page.goto('https://scm.kkday.com/v1/en/auth/login', {
       waitUntil: 'networkidle2'
     });
@@ -247,8 +233,6 @@ export class KKdayCrawler {
       await this.fillVerificationCode(code, page);
       await this.saveCookies(page);
     }
-
-    this.loggerService.info('KKDAY login thành công');
 
     return page;
   }
@@ -294,7 +278,8 @@ export class KKdayCrawler {
 
     const part =
       full.data.payload?.parts?.find(
-        (p: any) => p.mimeType === 'text/html' || p.mimeType === 'text/plain'
+        (p: gmail_v1.Schema$MessagePart) =>
+          p.mimeType === 'text/html' || p.mimeType === 'text/plain'
       ) ?? full.data.payload;
 
     if (!part?.body?.data) return null;
@@ -314,7 +299,6 @@ export class KKdayCrawler {
 
   async crawlOrderDetail(bookingId: string, page: Page): Promise<FlightDetail> {
     const url = `https://scm.kkday.com/v1/en/order/index/${bookingId}`;
-    this.loggerService.info(`Url kkday ${url}`);
     await page.goto(url, {
       waitUntil: 'domcontentloaded',
       timeout: 30000
@@ -326,8 +310,8 @@ export class KKdayCrawler {
     });
 
     return await page.evaluate((bId: string) => {
-      // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-      const extractTime = (dateTime: string) => dateTime.split(' ')[1] ?? '';
+      const extractTime = (dateTime: string): string =>
+        dateTime.split(' ')[1] ?? '';
 
       const result: any = {
         bookingId: bId,
@@ -388,7 +372,6 @@ export class KKdayCrawler {
         result.contact = match ? match[1].trim() : '';
       }
 
-      // --- VIP level ---
       const vipEl = Array.from(document.querySelectorAll('div.text-sm')).find(
         (div: Element) => div.textContent?.includes('VIP Fast Track')
       );
@@ -447,12 +430,10 @@ export class KKdayCrawler {
         }
       });
 
-      // PRICE
       const priceEls = document.querySelectorAll('.widget-price');
 
       priceEls.forEach((el: Element) => {
         const txt = el.textContent?.trim() ?? '';
-        // ví dụ: "VND 1,147,500.00" hoặc "USD 48.00"
 
         const match = txt.match(/([A-Z]{3})\s*([\d,]+(?:\.\d+)?)/);
         if (!match) return;
@@ -532,8 +513,6 @@ export class KKdayCrawler {
     if (!orderId) return;
 
     const records = await this.buildFullBookingInfo(flightDetail, bookingDate);
-
-    this.loggerService.info(`Data cào được: ${records}`);
 
     for (const r of records) {
       await this.saveToSheet(r, 'timehouse@');

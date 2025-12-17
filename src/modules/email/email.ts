@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { gmail_v1, google } from 'googleapis';
 
 import 'dotenv/config';
 import { GoogleService } from '@modules/google/google';
@@ -39,12 +39,10 @@ export class EmailService {
       });
 
       const subject = resMsg.data.payload?.headers?.find(
-        (h: any) => h.name === 'Subject'
+        (h: gmail_v1.Schema$MessagePartHeader) => h.name === 'Subject'
       )?.value;
 
       const internalDate = resMsg.data.internalDate;
-
-      this.loggerService.info(`Gmail received date: ${internalDate}`);
 
       const receivedAt = internalDate
         ? new Date(parseInt(internalDate, 10)).toISOString().split('T')[0]
@@ -87,14 +85,12 @@ export class EmailService {
       });
 
       const subject = resMsg.data.payload?.headers?.find(
-        (h: any) => h.name === 'Subject'
+        (h: gmail_v1.Schema$MessagePartHeader) => h.name === 'Subject'
       )?.value;
 
       if (!subject) continue;
 
       const internalDate = resMsg.data.internalDate;
-
-      this.loggerService.info(`Gmail received date: ${internalDate}`);
 
       const receivedAt = internalDate
         ? new Date(parseInt(internalDate, 10)).toISOString().split('T')[0]
