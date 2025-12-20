@@ -41,6 +41,40 @@ export class GoggleSheetService {
     );
   }
 
+  async isBookingExists(
+    auth: OAuth2Client,
+    bookingId: string,
+    sheetId: string = process.env.GOOGLE_SHEET_ID || ''
+  ): Promise<boolean> {
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: 'Sheet1!A:Z'
+    });
+
+    const rows = res.data.values || [];
+    if (rows.length < 2) return false;
+
+    const headers = rows[0].map((h: string) =>
+      h.toString().trim().toUpperCase()
+    );
+
+    const idIndex = headers.indexOf('ID BOOKING');
+    if (idIndex === -1) return false;
+
+    for (const row of rows.slice(1)) {
+      const val = row[idIndex];
+      if (!val) continue;
+
+      if (val.replace(/^'/, '') === bookingId) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   async appendToGoogleSheet(
     auth: OAuth2Client,
     detail: BookingDetail,
@@ -160,7 +194,7 @@ export class GoggleSheetService {
 
         'BOOKING DATE': detail.bookingDate,
 
-        SUMMARY: summary,
+        SUMMARY: '',
 
         VND: priceVND,
 
@@ -173,10 +207,20 @@ export class GoggleSheetService {
 
       const row = headers.map((h: any) => dataMap[h] ?? '');
 
+      // await sheets.spreadsheets.values.append({
+      //   spreadsheetId: sheetId,
+      //   range: 'Sheet1!A:Z',
+      //   valueInputOption: 'USER_ENTERED',
+      //   requestBody: {
+      //     values: [row]
+      //   }
+      // });
+
       await sheets.spreadsheets.values.append({
         spreadsheetId: sheetId,
-        range: 'Sheet1!A:Z',
+        range: 'Sheet1!A1',
         valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS',
         requestBody: {
           values: [row]
         }

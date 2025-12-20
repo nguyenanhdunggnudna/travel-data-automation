@@ -11,36 +11,41 @@ import { PLATFORM } from 'src/config/platform/platform.constant';
 import { fetchFlightInfoSmart } from '@modules/flight/flight';
 import { LoggerService } from 'src/logger/logger';
 
-interface FlightDetail {
-  bookingId: string;
-  flightNo: string;
-  airport: string;
-  arrival: {
-    flightNo: string;
-    dateTime: string;
-  };
-  departure: {
-    flightNo: string;
-    dateTime: string;
-  };
-}
-
 interface FinalRecord {
   orderId: string;
   flightNo: string;
-  arrivalTimeScheduled?: string;
-  departureTimeActual?: string;
   name: string;
   dateOfUse: string;
   adults: number;
   children: number;
   contact: string;
   serviceType: string;
-  arrival?: string;
-  departure?: string;
+  bookingDate: string;
+  prices: Record<string, number>;
+  arrival?: 'Arrival';
+  departure?: 'Departure';
   platform?: string;
-  time?: string;
   airport?: string;
+  time?: string;
+}
+
+interface FlightSide {
+  flightNo: string;
+  date: string;
+  time: string;
+}
+
+interface FlightDetail {
+  bookingId: string;
+  arrival: FlightSide;
+  departure: FlightSide;
+  contact: string;
+  serviceType: string;
+  name: string;
+  dateOfUse: string;
+  adults: number;
+  child: number;
+  prices: Record<string, number>;
 }
 
 export class KKdayCrawler {
@@ -237,6 +242,12 @@ export class KKdayCrawler {
     return page;
   }
 
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  private extractDateTime(dateTime: string) {
+    const [date = '', time = ''] = dateTime.replace(/\u00a0/, ' ').split(' ');
+    return { date, time };
+  }
+
   // ---------- MAIL PARSER ----------
   async getLatestEmailBody(subject: string): Promise<string | null> {
     const delay = (ms: number): Promise<void> =>
@@ -310,20 +321,29 @@ export class KKdayCrawler {
     });
 
     return await page.evaluate((bId: string) => {
-      const extractTime = (dateTime: string): string =>
-        dateTime.split(' ')[1] ?? '';
+      // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+      const extractDateTime = (dt: string) => {
+        const parts = dt
+          .replace(/\u00a0/g, ' ')
+          .trim()
+          .split(' ');
+        return {
+          date: parts[0] ?? '',
+          time: parts[1] ?? ''
+        };
+      };
 
-      const result: any = {
+      const result: FlightDetail = {
         bookingId: bId,
-        arrival: { flightNo: '', time: '' },
-        departure: { flightNo: '', time: '' },
+        arrival: { flightNo: '', date: '', time: '' },
+        departure: { flightNo: '', date: '', time: '' },
         contact: '',
         serviceType: '',
         name: '',
         dateOfUse: '',
-        adults: '',
-        child: '',
-        prices: {} as Record<string, number>
+        adults: 0,
+        child: 0,
+        prices: {}
       };
 
       const airlineSection = document.querySelector('#info_type3');
@@ -332,116 +352,103 @@ export class KKdayCrawler {
       const flightDivs = Array.from(
         airlineSection.querySelectorAll('div.col-md-6')
       );
+
       flightDivs.forEach((div: Element) => {
         const title = div.querySelector('h4.area-title')?.textContent?.trim();
         if (!title) return;
 
-        const lis = Array.from(div.querySelectorAll('ul.info-list > li'));
         let flightNo = '';
         let dateTime = '';
 
-        lis.forEach((li: Element) => {
-          const liTitle = li
+        div.querySelectorAll('ul.info-list > li').forEach((li: Element) => {
+          const label = li
             .querySelector('.info-list-title')
             ?.textContent?.trim();
-          const liText = li
+          const value = li
             .querySelector('.info-list-text')
             ?.textContent?.trim();
-          if (!liTitle || !liText) return;
+          if (!label || !value) return;
 
-          if (liTitle.includes('Flight no.')) flightNo = liText;
-          if (liTitle.includes('Date &'))
-            dateTime = liText.replace(/\u00a0/, ' ');
+          if (label.includes('Flight no.')) flightNo = value;
+          if (label.includes('Date &')) dateTime = value;
         });
 
-        const time = extractTime(dateTime);
+        const { date, time } = extractDateTime(dateTime);
 
         if (title.includes('Arrival')) {
-          result.arrival = { flightNo, time };
+          result.arrival = { flightNo, date, time };
         } else if (title.includes('Departure')) {
-          result.departure = { flightNo, time };
+          result.departure = { flightNo, date, time };
         }
       });
 
-      const phoneEl = Array.from(
-        document.querySelectorAll('p.info-sub-list')
-      ).find((p: Element) => p.textContent?.includes("Buyer's Phone Number"));
-
-      if (phoneEl) {
-        const match = phoneEl.textContent?.match(/Buyer's Phone Number：(.+)/);
-        result.contact = match ? match[1].trim() : '';
-      }
-
-      const vipEl = Array.from(document.querySelectorAll('div.text-sm')).find(
-        (div: Element) => div.textContent?.includes('VIP Fast Track')
-      );
-      if (vipEl) {
-        result.serviceType = vipEl.textContent?.includes('[PREMIUM]')
-          ? 'PREMIUM'
-          : '';
-      }
-
-      const travelerBoxes = document.querySelectorAll(
-        '#info_type1 .box-primary'
-      );
-      const travelerNames: string[] = [];
-
-      travelerBoxes.forEach((box: Element) => {
-        let surname = '';
-        let firstName = '';
-
-        const rows = box.querySelectorAll('.info-list li');
-
-        rows.forEach((li: Element) => {
-          const label = li.childNodes[0]?.textContent?.trim() ?? '';
-          const value =
-            li.querySelector('.pull-right b')?.textContent?.trim() ?? '';
-
-          if (label.includes('Passport Surname')) surname = value;
-          if (label.includes('Passport First Name')) firstName = value;
-        });
-
-        const fullName = `${surname} ${firstName}`.trim();
-        if (fullName) travelerNames.push(fullName);
-      });
-
-      result.name = travelerNames.join('\n');
-
+      // fallback date of use
       const dateValueEl = document.querySelector('.order-date-value-01');
       if (dateValueEl) {
         result.dateOfUse = dateValueEl.textContent?.trim() ?? '';
       }
 
-      const infoLists = Array.from(
+      // contact
+      const phoneEl = Array.from(
         document.querySelectorAll('p.info-sub-list')
+      ).find((p: Element) => p.textContent?.includes("Buyer's Phone Number"));
+
+      if (phoneEl) {
+        const m = phoneEl.textContent?.match(/Buyer's Phone Number：(.+)/);
+        result.contact = m ? m[1].trim() : '';
+      }
+
+      // service type
+      const vipEl = Array.from(document.querySelectorAll('div.text-sm')).find(
+        (el: Element) => el.textContent?.includes('VIP Fast Track')
       );
+      if (vipEl && vipEl.textContent?.includes('[PREMIUM]')) {
+        result.serviceType = 'PREMIUM';
+      }
 
-      infoLists.forEach((el: Element) => {
-        const txt = el.textContent?.trim() ?? '';
+      // travelers
+      const travelerBoxes = document.querySelectorAll(
+        '#info_type1 .box-primary'
+      );
+      const names: string[] = [];
 
-        if (txt.startsWith('Adult')) {
-          const m = txt.match(/Adult X (\d+)/i);
+      travelerBoxes.forEach((box: Element) => {
+        let sur = '';
+        let first = '';
+
+        box.querySelectorAll('.info-list li').forEach((li: Element) => {
+          const label = li.childNodes[0]?.textContent?.trim() ?? '';
+          const value =
+            li.querySelector('.pull-right b')?.textContent?.trim() ?? '';
+
+          if (label.includes('Passport Surname')) sur = value;
+          if (label.includes('Passport First Name')) first = value;
+        });
+
+        const full = `${sur} ${first}`.trim();
+        if (full) names.push(full);
+      });
+
+      result.name = names.join('\n');
+
+      // pax
+      document.querySelectorAll('p.info-sub-list').forEach((el: Element) => {
+        const txt = el.textContent ?? '';
+        if (txt.includes('Adult')) {
+          const m = txt.match(/Adult X (\d+)/);
           if (m) result.adults = Number(m[1]);
         }
-
-        if (txt.startsWith('Child')) {
-          const m = txt.match(/Child X (\d+)/i);
+        if (txt.includes('Child')) {
+          const m = txt.match(/Child X (\d+)/);
           if (m) result.child = Number(m[1]);
         }
       });
 
-      const priceEls = document.querySelectorAll('.widget-price');
-
-      priceEls.forEach((el: Element) => {
-        const txt = el.textContent?.trim() ?? '';
-
-        const match = txt.match(/([A-Z]{3})\s*([\d,]+(?:\.\d+)?)/);
-        if (!match) return;
-
-        const currency = match[1];
-        const amount = Number(match[2].replace(/,/g, ''));
-
-        result.prices[currency] = amount;
+      // prices
+      document.querySelectorAll('.widget-price').forEach((el: Element) => {
+        const m = el.textContent?.match(/([A-Z]{3})\s*([\d,]+)/);
+        if (!m) return;
+        result.prices[m[1]] = Number(m[2].replace(/,/g, ''));
       });
 
       return result;
@@ -449,7 +456,7 @@ export class KKdayCrawler {
   }
 
   async buildFullBookingInfo(
-    flightDetail: any,
+    flightDetail: FlightDetail,
     bookingDate: string
   ): Promise<FinalRecord[]> {
     const result: FinalRecord[] = [];
@@ -457,7 +464,6 @@ export class KKdayCrawler {
     const common = {
       orderId: flightDetail.bookingId,
       name: flightDetail.name,
-      dateOfUse: flightDetail.dateOfUse,
       adults: flightDetail.adults,
       children: flightDetail.child,
       contact: `="${flightDetail.contact}"`,
@@ -466,37 +472,39 @@ export class KKdayCrawler {
       prices: flightDetail.prices
     };
 
-    if (flightDetail.arrival?.flightNo) {
-      const flightInfo = await fetchFlightInfoSmart(
-        flightDetail.arrival?.flightNo,
+    // ARRIVAL
+    if (flightDetail.arrival.flightNo) {
+      const info = await fetchFlightInfoSmart(
+        flightDetail.arrival.flightNo,
         false
       );
 
       result.push({
         ...common,
         flightNo: flightDetail.arrival.flightNo,
-        time: flightInfo.time,
         arrival: 'Arrival',
-        departure: '',
-        platform: PLATFORM.KKDAY,
-        airport: flightInfo.airport
+        airport: info.airport,
+        time: info.time,
+        dateOfUse: flightDetail.arrival.date || flightDetail.dateOfUse || '',
+        platform: PLATFORM.KKDAY
       });
     }
 
-    if (flightDetail.departure?.flightNo) {
-      const flightInfo = await fetchFlightInfoSmart(
-        flightDetail.arrival?.flightNo,
+    // DEPARTURE
+    if (flightDetail.departure.flightNo) {
+      const info = await fetchFlightInfoSmart(
+        flightDetail.departure.flightNo,
         true
       );
 
       result.push({
         ...common,
         flightNo: flightDetail.departure.flightNo,
-        arrival: '',
         departure: 'Departure',
-        platform: PLATFORM.KKDAY,
-        airport: flightInfo.airport,
-        time: flightInfo.time
+        airport: info.airport,
+        time: info.time,
+        dateOfUse: flightDetail.departure.date || flightDetail.dateOfUse || '',
+        platform: PLATFORM.KKDAY
       });
     }
 

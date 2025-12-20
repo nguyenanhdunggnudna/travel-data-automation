@@ -10,19 +10,22 @@ export interface MailItem {
   receivedAt: string;
 }
 export class EmailService {
+  private readonly START_DATE = '2025/12/19';
+
   constructor(
     private readonly kkDayGoogleService: GoogleService,
     private readonly tripComGoogleService: GoogleService,
     private readonly loggerService: LoggerService
   ) {}
+
   async getAllTripComOrderIds(): Promise<MailItem[]> {
     const auth = await this.tripComGoogleService.authorize();
     const gmail = google.gmail({ version: 'v1', auth });
 
     const resList = await gmail.users.messages.list({
       userId: 'me',
-      maxResults: 30,
-      q: 'is:unread subject:"Trip.com ANT" -label:PENDING -label:DONE -label:FAILED'
+      maxResults: 50,
+      q: `subject:"Trip.com ANT" -label:PENDING -label:DONE -label:FAILED after:${this.START_DATE}`
     });
 
     const messages = resList.data.messages;
@@ -70,7 +73,7 @@ export class EmailService {
     const resList = await gmail.users.messages.list({
       userId: 'me',
       maxResults: 50,
-      q: 'is:unread -label:PENDING -label:DONE -label:FAILED (subject:"You have a new order" OR subject:"You have a new message about Booking ID:")'
+      q: `-label:PENDING -label:DONE -label:FAILED (subject:"You have a new order" OR subject:"You have a new message about Booking ID:") after:${this.START_DATE}`
     });
 
     const messages = resList.data.messages ?? [];

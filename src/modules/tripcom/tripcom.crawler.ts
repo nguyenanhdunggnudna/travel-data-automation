@@ -331,6 +331,8 @@ export class TripComCrawler {
       }
     );
 
+    console.log(`orderId: ${orderId} - flight.no: ${flightNo}`);
+
     return {
       orderId,
       fullName,

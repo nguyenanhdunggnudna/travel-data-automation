@@ -71,11 +71,9 @@ async function main(): Promise<void> {
 
   const KKDAY_PENDING = await labelKKDayService.getOrCreateLabel('PENDING');
   const KKDAY_DONE = await labelKKDayService.getOrCreateLabel('DONE');
-  const KKDAY_FAILED = await labelKKDayService.getOrCreateLabel('FAILED');
 
   const TRIP_PENDING = await labelTripcomService.getOrCreateLabel('PENDING');
   const TRIP_DONE = await labelTripcomService.getOrCreateLabel('DONE');
-  const TRIP_FAILED = await labelTripcomService.getOrCreateLabel('FAILED');
 
   loginJob = cron.schedule('0 */30 * * * *', async () => {
     try {
@@ -95,6 +93,16 @@ async function main(): Promise<void> {
       loggerService.info(`TripCom mails: ${tripMails.length}`);
 
       for (const mail of tripMails) {
+        const exists = await googleSheet.isBookingExists(
+          tripComAuth,
+          mail.orderId
+        );
+
+        if (exists) {
+          await labelTripcomService.addLabel(mail.messageId, TRIP_DONE);
+          continue;
+        }
+
         if (
           processedTrip.has(mail.messageId) ||
           processingTrip.has(mail.messageId)
@@ -125,8 +133,23 @@ async function main(): Promise<void> {
       }
 
       const kkdayMails = await emailService.getAllKKdayOrderIds();
+      loggerService.info(`KKDay mails: ${kkdayMails.length}`);
 
       for (const mail of kkdayMails) {
+        console.log('order id: ', mail.orderId);
+        const exists = await googleSheet.isBookingExists(
+          kkdayAuth,
+          mail.orderId
+        );
+
+        console.log('exists: ', exists);
+
+        if (exists) {
+          console.log('TRUE');
+          await labelKKDayService.addLabel(mail.messageId, KKDAY_DONE);
+          continue;
+        }
+
         if (
           processedKKday.has(mail.messageId) ||
           processingKKday.has(mail.messageId)

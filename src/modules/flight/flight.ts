@@ -32,14 +32,19 @@ export const VN_AIRPORTS = new Set([
   'VCS' // Côn Đảo
 ]);
 
-function pickVietnamAirport(from: string, to: string): string {
-  if (VN_AIRPORTS.has(from)) return from;
-  if (VN_AIRPORTS.has(to)) return to;
-  return from; // fallback
-}
-
 async function getIataCode(airlineName: string): Promise<string | null> {
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu'
+    ]
+  });
   const page = await browser.newPage();
   try {
     const searchUrl = `https://www.iata.org/PublicationDetails/Search/?currentBlock=314383&currentPage=12572&airline.search=${encodeURIComponent(
@@ -79,12 +84,33 @@ async function normalizeFlightNo(raw: string): Promise<string | null> {
   return `${iataCode}${flightNumber}`;
 }
 
-async function fetchFlightInfo(
-  flightNo: string,
-  isDeparture?: boolean
-): Promise<any> {
+function pickVietnamSide(from: string, to: string): 'FROM' | 'TO' | null {
+  if (VN_AIRPORTS.has(from)) return 'FROM';
+  if (VN_AIRPORTS.has(to)) return 'TO';
+  return null;
+}
+
+function parseScheduledTime(text?: string): string {
+  if (!text) return '';
+
+  const timeMatch = text.match(/(\d{1,2}:\d{2})/);
+  return timeMatch ? timeMatch[1] : '';
+}
+
+async function fetchFlightInfo(flightNo: string): Promise<any> {
   let normalizedFlightNo = flightNo;
-  const browser: Browser = await puppeteer.launch({ headless: true });
+  const browser: Browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu'
+    ]
+  });
   const page: Page = await browser.newPage();
 
   try {
@@ -101,6 +127,7 @@ async function fetchFlightInfo(
     const flightNumber = match[2];
 
     const url = `https://www.flightstats.com/v2/flight-tracker/${airlineCode}/${flightNumber}`;
+    console.log('url chuyến bay: ', url);
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
@@ -158,22 +185,22 @@ async function fetchFlightInfo(
     const fromCode = data.routeFrom.trim();
     const toCode = data.routeTo.trim();
 
-    const depTime = data.departureTimeScheduled || '';
-    const arrTime = data.arrivalTimeScheduled || '';
+    const depTime = parseScheduledTime(data.departureTimeScheduled);
+    const arrTime = parseScheduledTime(data.arrivalTimeScheduled);
 
-    const airportVN = pickVietnamAirport(fromCode, toCode);
+    const vnSide = pickVietnamSide(fromCode, toCode);
+    if (!vnSide) {
+      return { info: false };
+    }
 
-    return isDeparture
-      ? {
-          info: true,
-          airport: airportVN, // Sân bay đi
-          time: depTime // Giờ bay
-        }
-      : {
-          info: true,
-          airport: airportVN, // Sân bay đến
-          time: arrTime // Giờ đến
-        };
+    const airportVN = vnSide === 'FROM' ? fromCode : toCode;
+    const time = vnSide === 'FROM' ? depTime : arrTime;
+
+    return {
+      info: true,
+      airport: airportVN,
+      time
+    };
   } catch (err) {
     console.error(err);
     await browser.close();
@@ -182,15 +209,26 @@ async function fetchFlightInfo(
 }
 
 async function fetchFlightInfoFromTripCom(
-  flightNo: string,
-  isDeparture?: boolean
+  flightNo: string
 ): Promise<FlightInfo> {
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu'
+    ]
+  });
   const page = await browser.newPage();
 
   try {
     const normalized = flightNo.replace(/\s+/g, '').toUpperCase(); // VJ842
     const url = `https://vn.trip.com/flights/status-${normalized}/?locale=en_xx`;
+    console.log('url chuyến bay: ', url);
 
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
@@ -299,24 +337,22 @@ async function fetchFlightInfoFromTripCom(
       }
     }
 
-    const departureTime =
-      data.departureTimeReal || data.departureTimeScheduled || '';
+    depTime = parseScheduledTime(data.departureTimeScheduled);
+    const arrTime = parseScheduledTime(data.arrivalTimeScheduled);
 
-    const arrivalTime = data.arrivalTimeReal || data.arrivalTimeScheduled || '';
+    const vnSide = pickVietnamSide(routeFromCode, routeToCode);
+    if (!vnSide) {
+      return { info: false };
+    }
 
-    const airportVN = pickVietnamAirport(routeFromCode, routeToCode);
+    const airportVN = vnSide === 'FROM' ? routeFromCode : routeToCode;
+    const time = vnSide === 'FROM' ? depTime : arrTime;
 
-    return isDeparture
-      ? {
-          info: true,
-          airport: airportVN, // Sân bay đi
-          time: departureTime // Giờ khởi hành
-        }
-      : {
-          info: true,
-          airport: airportVN, // Sân bay đến
-          time: arrivalTime // Giờ hạ cánh
-        };
+    return {
+      info: true,
+      airport: airportVN,
+      time
+    };
   } catch (err) {
     await browser.close();
     return { info: false };
@@ -330,13 +366,13 @@ export async function fetchFlightInfoSmart(
   console.log('Flight no nhận được từ các nền tảng: ', flightNo);
   if (!flightNo) return { info: false };
 
-  const tripComData = await fetchFlightInfoFromTripCom(flightNo, isDeparture);
+  const tripComData = await fetchFlightInfoFromTripCom(flightNo);
   if (tripComData.info === true) {
     console.log('thông tin bay từ trip com: ', tripComData);
     return tripComData;
   }
 
-  const statsData = await fetchFlightInfo(flightNo, isDeparture);
+  const statsData = await fetchFlightInfo(flightNo);
   if (statsData.info === true) {
     console.log('thông tin bay từ fetch Flight Info: ', statsData);
     return statsData;
