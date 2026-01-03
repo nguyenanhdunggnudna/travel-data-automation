@@ -10,7 +10,7 @@ export interface MailItem {
   receivedAt: string;
 }
 export class EmailService {
-  private readonly START_DATE = '2025/12/19';
+  private readonly START_DATE = '2025/12/23';
 
   constructor(
     private readonly kkDayGoogleService: GoogleService,
@@ -73,7 +73,7 @@ export class EmailService {
     const resList = await gmail.users.messages.list({
       userId: 'me',
       maxResults: 50,
-      q: `-label:PENDING -label:DONE -label:FAILED (subject:"You have a new order" OR subject:"You have a new message about Booking ID:") after:${this.START_DATE}`
+      q: `-label:PENDING -label:DONE -label:FAILED (subject:"You have a new order") after:${this.START_DATE}`
     });
 
     const messages = resList.data.messages ?? [];

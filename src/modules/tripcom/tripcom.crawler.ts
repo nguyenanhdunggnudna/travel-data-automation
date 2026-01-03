@@ -188,7 +188,7 @@ export class TripComCrawler {
           let arrival = '';
           let departure = '';
           let service = '';
-          let airport;
+          let airport = '';
 
           const table = document.querySelector(
             ORDER_DETAIL_SELECTOR.TRAVELER.TABLE_SELECTOR
@@ -211,9 +211,7 @@ export class TripComCrawler {
           let totalAdults = 0;
 
           trs.forEach((tr: Element, index: number) => {
-            if (tr.getAttribute('aria-hidden') === 'true') {
-              return;
-            }
+            if (tr.getAttribute('aria-hidden') === 'true') return;
 
             const cells = Array.from(tr.querySelectorAll('td'));
             if (cells.length === 0) return;
@@ -250,8 +248,9 @@ export class TripComCrawler {
 
             rows.push(name);
 
-            const adults = customerCell.innerText.includes('Adults') ? 1 : 0;
-            totalAdults += adults;
+            if (customerCell.innerText.includes('Adults')) {
+              totalAdults += 1;
+            }
           });
 
           return { rows, totalAdults, arrival, departure, airport };
@@ -264,13 +263,15 @@ export class TripComCrawler {
     const fullName = rows.join('\n');
     const adults = totalAdults;
 
+    /**
+     * Service type + contact
+     */
     const { serviceType, contact } = await page.evaluate(() => {
       const titleEl = document.querySelector('.item_content_title');
       let serviceType = '';
 
       if (titleEl) {
         const text = titleEl.textContent?.trim() || '';
-
         if (text.includes('[PREMIUM]')) {
           serviceType = 'PREMIUM';
         }
@@ -283,7 +284,6 @@ export class TripComCrawler {
       );
 
       let contact = '';
-
       if (messageLabel) {
         contact = messageLabel.nextElementSibling?.textContent?.trim() || '';
       }
@@ -291,8 +291,11 @@ export class TripComCrawler {
       return { serviceType, contact };
     });
 
+    /**
+     * Arrival flight no
+     */
     const flightNo = await page.evaluate(() => {
-      const FLIGHT_REGEX = /[A-Z]{1,3}\s?\d{1,4}[A-Z]?/g;
+      const FLIGHT_REGEX = /[A-Z]{1,3}\s?\d{1,4}[A-Z]?/;
 
       const label = Array.from(
         document.querySelectorAll('span.info_left')
@@ -300,24 +303,53 @@ export class TripComCrawler {
 
       if (!label) return '';
 
-      const text = label.nextElementSibling?.textContent ?? '';
-      const match = text.match(FLIGHT_REGEX);
-
-      return match ? match[0] : '';
+      const text = label.nextElementSibling?.textContent || '';
+      return text.match(FLIGHT_REGEX)?.[0] || '';
     });
 
+    /**
+     * Departure flight no + date
+     */
+    const { departureFlightNo, departureDate } = await page.evaluate(() => {
+      const FLIGHT_REGEX = /[A-Z]{1,3}\s?\d{1,4}[A-Z]?/;
+      const DATE_REGEX = /\d{1,2}\/[A-Za-z]+/;
+
+      const label = Array.from(
+        document.querySelectorAll('span.info_left')
+      ).find(
+        (el: Element) => el.textContent?.trim() === 'Departure flight no.:'
+      );
+
+      if (!label) {
+        return { departureFlightNo: '', departureDate: '' };
+      }
+
+      const text = label.nextElementSibling?.textContent || '';
+
+      return {
+        departureFlightNo: text.match(FLIGHT_REGEX)?.[0] || '',
+        departureDate: text.match(DATE_REGEX)?.[0] || ''
+      };
+    });
+
+    /**
+     * Date of use
+     */
     const dateOfUse = await page.evaluate(() => {
       const dateCell = document.querySelector('td .two_line');
       return dateCell?.textContent?.trim() || '';
     });
 
+    /**
+     * Prices
+     */
     const prices = await page.$$eval(
       '.ant-table-tbody tr td:nth-child(8) div div',
       (priceDivs: HTMLDivElement[]) => {
         const result: Record<string, number> = {};
         const regex = /([A-Z]{3})\s([\d,.]+)/g;
 
-        priceDivs.forEach((div: HTMLDivElement) => {
+        priceDivs.forEach((div: Element) => {
           const text = div.textContent || '';
           let match;
           while ((match = regex.exec(text)) !== null) {
@@ -331,7 +363,9 @@ export class TripComCrawler {
       }
     );
 
-    console.log(`orderId: ${orderId} - flight.no: ${flightNo}`);
+    console.log(
+      `orderId: ${orderId} - arrival: ${flightNo} - departure: ${departureFlightNo}`
+    );
 
     return {
       orderId,
@@ -340,6 +374,8 @@ export class TripComCrawler {
       children: 0,
       name: fullName,
       flightNo,
+      departureFlightNo,
+      departureDate,
       arrival,
       departure,
       airport,
@@ -354,47 +390,81 @@ export class TripComCrawler {
     detail: BookingDetail,
     bookingDate: string
   ): Promise<BookingDetail[]> {
-    const result = [];
+    const result: BookingDetail[] = [];
 
     const common = {
       orderId: detail.orderId,
       fullName: detail.fullName,
       name: detail.name,
-      dateOfUse: detail.dateOfUse,
       adults: detail.adults,
       children: detail.children,
       serviceType: detail.serviceType,
       contact: `="${detail.contact}"`,
       bookingDate,
-      prices: detail.prices
+      prices: detail.prices,
+      platform: 'TRIPCOM'
     };
 
-    if (detail.arrival === 'Arrival') {
+    /**
+     * =====================
+     * ARRIVAL
+     * =====================
+     */
+    if (detail.flightNo) {
       const flightInfo = await fetchFlightInfoSmart(detail.flightNo, false);
 
       result.push({
         ...common,
         flightNo: detail.flightNo,
+        dateOfUse: detail.dateOfUse,
         arrival: 'Arrival',
         departure: '',
         airport: flightInfo?.airport,
-        time: flightInfo?.time,
-        platform: 'TRIPCOM'
+        time: flightInfo?.time
       });
     }
 
-    if (detail.departure === 'Departure') {
-      const flightInfo = await fetchFlightInfoSmart(detail.flightNo, true);
+    /**
+     * =====================
+     * DEPARTURE
+     * =====================
+     */
+    if (detail.departureFlightNo) {
+      const flightInfo = await fetchFlightInfoSmart(
+        detail.departureFlightNo,
+        true
+      );
 
       result.push({
         ...common,
-        flightNo: detail.flightNo,
+        flightNo: detail.departureFlightNo,
+        dateOfUse: detail.departureDate,
         arrival: '',
         departure: 'Departure',
         airport: flightInfo?.airport,
-        time: flightInfo?.time,
-        platform: 'TRIPCOM'
+        time: flightInfo?.time
       });
+    }
+
+    const hasArrivalFlight = Boolean(detail.flightNo);
+    const hasDepartureFlight = Boolean(detail.departureFlightNo);
+
+    if (!hasArrivalFlight && !hasDepartureFlight) {
+      result.push({
+        ...common,
+        flightNo: '',
+        dateOfUse: detail.dateOfUse,
+        arrival: detail.arrival || '',
+        departure: detail.departure || '',
+        airport: detail.airport || '',
+        time: ''
+      });
+    }
+
+    if (result.length === 0) {
+      this.loggerService.warn(
+        `[TripCom] No flight record generated: ${detail.orderId}`
+      );
     }
 
     return result;
@@ -408,6 +478,8 @@ export class TripComCrawler {
     const googleAuth = await this.googleService.authorize();
 
     const detail = await this.crawlBookingDetail(page, orderId);
+
+    console.log('Trip com data detail: ', detail);
 
     const records = await this.buildTripcomBookingInfo(detail, bookingDate);
 

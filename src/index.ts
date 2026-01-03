@@ -12,6 +12,7 @@ import { LabelService } from '@modules/google/gmail-label';
 
 import { LoggerService } from './logger/logger';
 import { PLATFORM } from './config/platform/platform.constant';
+import { google } from 'googleapis';
 
 const loggerService = new LoggerService();
 
@@ -87,8 +88,13 @@ async function main(): Promise<void> {
     }
   });
 
-  crawlJob = cron.schedule('0 */3 * * * *', async () => {
+  const sheets = google.sheets({ version: 'v4', auth: tripComAuth });
+
+  crawlJob = cron.schedule('0 */5 * * * *', async () => {
     try {
+      let hasNewData = false;
+
+      /* ========= TRIPCOM ========= */
       const tripMails = await emailService.getAllTripComOrderIds();
       loggerService.info(`TripCom mails: ${tripMails.length}`);
 
@@ -119,33 +125,33 @@ async function main(): Promise<void> {
             mail.receivedAt
           );
 
+          hasNewData = true;
+
           await labelTripcomService.removeLabel(mail.messageId, TRIP_PENDING);
           await labelTripcomService.addLabel(mail.messageId, TRIP_DONE);
-
           processedTrip.add(mail.messageId);
         } catch (err) {
           loggerService.error(`TripCom failed | ${err}`);
-
           await labelTripcomService.removeLabel(mail.messageId, TRIP_PENDING);
         } finally {
           processingTrip.delete(mail.messageId);
         }
       }
 
+      /* ========= KKDAY ========= */
       const kkdayMails = await emailService.getAllKKdayOrderIds();
       loggerService.info(`KKDay mails: ${kkdayMails.length}`);
 
       for (const mail of kkdayMails) {
-        console.log('order id: ', mail.orderId);
         const exists = await googleSheet.isBookingExists(
           kkdayAuth,
           mail.orderId
         );
 
-        console.log('exists: ', exists);
+        console.log(`${mail.orderId} - exists? ${exists}`);
 
         if (exists) {
-          console.log('TRUE');
+          console.log('KKDAY có exist không');
           await labelKKDayService.addLabel(mail.messageId, KKDAY_DONE);
           continue;
         }
@@ -166,18 +172,27 @@ async function main(): Promise<void> {
             mail.receivedAt
           );
 
+          hasNewData = true;
+
           await labelKKDayService.removeLabel(mail.messageId, KKDAY_PENDING);
           await labelKKDayService.addLabel(mail.messageId, KKDAY_DONE);
-
           processedKKday.add(mail.messageId);
         } catch (err) {
           loggerService.error(`KKday failed | ${err}`);
-
           await labelKKDayService.removeLabel(mail.messageId, KKDAY_PENDING);
         } finally {
           processingKKday.delete(mail.messageId);
         }
       }
+
+      /* ========= SORT 1 LẦN DUY NHẤT ========= */
+      if (hasNewData) {
+        await googleSheet.sortByDateOfUse(sheets, process.env.GOOGLE_SHEET_ID!);
+        loggerService.info('✅ Sorted sheet after batch crawl');
+      }
+
+      processedKKday.clear();
+      processedTrip.clear();
     } catch (err) {
       loggerService.error(`Cron error: ${err}`);
     }
@@ -192,6 +207,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: Error) => {
+  console.error('catch error: ', err);
   loggerService.error(`❌ App crashed: ${err}`);
   process.exit(1);
 });

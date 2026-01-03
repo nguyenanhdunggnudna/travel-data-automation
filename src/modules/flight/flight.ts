@@ -363,7 +363,6 @@ export async function fetchFlightInfoSmart(
   flightNo: string | undefined,
   isDeparture?: boolean
 ): Promise<FlightInfo> {
-  console.log('Flight no nhận được từ các nền tảng: ', flightNo);
   if (!flightNo) return { info: false };
 
   const tripComData = await fetchFlightInfoFromTripCom(flightNo);

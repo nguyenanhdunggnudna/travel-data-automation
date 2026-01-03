@@ -8,15 +8,38 @@ export class GoggleSheetService {
   private normalizeDate = (input?: string): string => {
     if (!input) return '';
 
-    // yyyy-mm-dd or yyyy-mm-dd HH:mm
-    if (input.includes('-')) {
+    // yyyy-MM-dd or yyyy-MM-dd HH:mm
+    if (/^\d{4}-\d{2}-\d{2}/.test(input)) {
       return input.split(' ')[0];
     }
 
     // dd/MM/yyyy
-    if (input.includes('/')) {
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(input)) {
       const [dd, mm, yyyy] = input.split('/');
-      if (yyyy) return `${yyyy}-${mm}-${dd}`;
+      return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+    }
+
+    // dd Month yyyy (10 January 2026)
+    const m = input.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+    if (m) {
+      const [, d, mon, y] = m;
+      const monthMap: Record<string, string> = {
+        january: '01',
+        february: '02',
+        march: '03',
+        april: '04',
+        may: '05',
+        june: '06',
+        july: '07',
+        august: '08',
+        september: '09',
+        october: '10',
+        november: '11',
+        december: '12'
+      };
+
+      const mm = monthMap[mon.toLowerCase()];
+      if (mm) return `${y}-${mm}-${d.padStart(2, '0')}`;
     }
 
     return '';
@@ -39,6 +62,36 @@ export class GoggleSheetService {
     return (res.data.values?.[0] || []).map((h: any) =>
       h.toString().trim().toUpperCase()
     );
+  }
+
+  async sortByDateOfUse(sheets: any, sheetId: string): Promise<void> {
+    const headers = await this.getSheetHeaders(sheets, sheetId);
+    const dateIndex = headers.indexOf('DATE OF USE');
+    if (dateIndex === -1) return;
+
+    const sheetIdNum = await this.getSheetId(sheets, sheetId);
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: {
+        requests: [
+          {
+            sortRange: {
+              range: {
+                sheetId: sheetIdNum,
+                startRowIndex: 1
+              },
+              sortSpecs: [
+                {
+                  dimensionIndex: dateIndex,
+                  sortOrder: 'ASCENDING'
+                }
+              ]
+            }
+          }
+        ]
+      }
+    });
   }
 
   async isBookingExists(
@@ -75,6 +128,18 @@ export class GoggleSheetService {
     return false;
   }
 
+  private async getSheetId(
+    sheets: any,
+    spreadsheetId: string,
+    sheetName = 'Sheet1'
+  ): Promise<number> {
+    const res = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = res.data.sheets?.find(
+      (s: any) => s.properties?.title === sheetName
+    );
+    return sheet?.properties?.sheetId ?? 0;
+  }
+
   async appendToGoogleSheet(
     auth: OAuth2Client,
     detail: BookingDetail,
@@ -82,8 +147,6 @@ export class GoggleSheetService {
     mail?: string
   ): Promise<void> {
     try {
-      let dateOfUse = '';
-
       const sheets = google.sheets({ version: 'v4', auth });
 
       const formatTime = (time?: string): string => time?.split(' ')[0] ?? '';
@@ -110,53 +173,12 @@ export class GoggleSheetService {
       const time =
         detail.time || formatTime(detail.flightInfo?.departureTimeScheduled);
 
-      const serviceLabel = detail.serviceType ? `${service} PRE` : service;
-
-      const pax =
-        detail.adults || detail.children
-          ? `${detail.adults ? `${detail.adults}NL` : ''}${
-              detail.children ? ` +${detail.children}TE` : ''
-            }`
-          : '';
-
-      if (detail.dateOfUse) {
-        let parts: string[] = [];
-        if (detail.dateOfUse.includes('-')) {
-          parts = detail.dateOfUse.split('-'); // 2025-12-26
-          if (parts.length === 3) {
-            dateOfUse = `${parts[2]}/${parts[1]}`; // dd/MM
-          }
-        } else if (detail.dateOfUse.includes('/')) {
-          parts = detail.dateOfUse.split('/'); // 26/12/2025
-          if (parts.length === 3) {
-            dateOfUse = `${parts[0]}/${parts[1]}`; // dd/MM
-          }
-        }
-      }
-
-      const nameInline = (detail.name || '').replace(/\s*\n\s*/g, ' ').trim();
-
-      const summaryParts = [
-        serviceLabel,
-        dateOfUse,
-        detail.flightNo,
-        time,
-        pax,
-        detail.airport,
-        nameInline
-      ].filter(
-        (v: string | undefined): v is string =>
-          typeof v === 'string' && v.trim() !== ''
-      );
-
-      const summary = summaryParts.join('/ ');
-
       const headers = await this.getSheetHeaders(sheets, sheetId);
 
       const dataMap: Record<string, any> = {
         PREMIUM: detail.serviceType ? 'PRE' : '',
 
-        'DATE OF USE': dateOfUse,
+        'DATE OF USE': `=DATEVALUE("${this.normalizeDate(detail.dateOfUse)}")`,
 
         URGENT: urgent,
 
@@ -192,7 +214,7 @@ export class GoggleSheetService {
 
         DEPARTURE: detail.departure,
 
-        'BOOKING DATE': detail.bookingDate,
+        'BOOKING DATE': this.normalizeDate(detail.bookingDate),
 
         SUMMARY: '',
 

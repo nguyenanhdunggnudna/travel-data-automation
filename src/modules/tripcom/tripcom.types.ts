@@ -29,4 +29,6 @@ export interface BookingDetail {
   time?: string;
   bookingDate?: string;
   prices?: any;
+  departureFlightNo?: string;
+  departureDate?: string;
 }

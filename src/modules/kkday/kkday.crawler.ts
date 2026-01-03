@@ -300,6 +300,7 @@ export class KKdayCrawler {
 
   private async saveToSheet(data: BookingDetail, mail: string): Promise<void> {
     const auth = await this.googleService.authorize();
+    this.loggerService.info(`Save to sheet booking: ${data.orderId} - ${data}`);
     await this.googleSheet.appendToGoogleSheet(
       auth,
       data,
@@ -310,15 +311,17 @@ export class KKdayCrawler {
 
   async crawlOrderDetail(bookingId: string, page: Page): Promise<FlightDetail> {
     const url = `https://scm.kkday.com/v1/en/order/index/${bookingId}`;
+
     await page.goto(url, {
-      waitUntil: 'domcontentloaded',
+      waitUntil: 'networkidle2',
       timeout: 30000
     });
 
-    await page.waitForSelector('#info_type3', {
-      visible: true,
-      timeout: 15000
-    });
+    await page
+      .waitForSelector('#info_type3', {
+        timeout: 60000
+      })
+      .catch(() => {});
 
     return await page.evaluate((bId: string) => {
       // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -347,8 +350,18 @@ export class KKdayCrawler {
       };
 
       const airlineSection = document.querySelector('#info_type3');
-      if (!airlineSection) return result;
 
+      // ✅ Không có flight section → trả mặc định
+      if (!airlineSection) {
+        // vẫn lấy được date of use nếu có
+        const dateValueEl = document.querySelector('.order-date-value-01');
+        if (dateValueEl) {
+          result.dateOfUse = dateValueEl.textContent?.trim() ?? '';
+        }
+        return result;
+      }
+
+      // ---------- Có flight section ----------
       const flightDivs = Array.from(
         airlineSection.querySelectorAll('div.col-md-6')
       );
@@ -377,12 +390,13 @@ export class KKdayCrawler {
 
         if (title.includes('Arrival')) {
           result.arrival = { flightNo, date, time };
-        } else if (title.includes('Departure')) {
+        }
+        if (title.includes('Departure')) {
           result.departure = { flightNo, date, time };
         }
       });
 
-      // fallback date of use
+      // date of use
       const dateValueEl = document.querySelector('.order-date-value-01');
       if (dateValueEl) {
         result.dateOfUse = dateValueEl.textContent?.trim() ?? '';
@@ -399,35 +413,49 @@ export class KKdayCrawler {
       }
 
       // service type
-      const vipEl = Array.from(document.querySelectorAll('div.text-sm')).find(
-        (el: Element) => el.textContent?.includes('VIP Fast Track')
+      // const vipEl = Array.from(document.querySelectorAll('div.text-sm')).find(
+      //   (el: Element) => el.textContent?.includes('VIP Fast Track')
+      // );
+      // if (vipEl?.textContent?.includes('[PREMIUM]')) {
+      //   result.serviceType = 'PREMIUM';
+      // }
+      // service type
+      const textSmEls = Array.from(
+        document.querySelectorAll('div.text-sm')
+      ) as HTMLElement[];
+
+      const hasVipFastTrack = textSmEls.some((el: Element) =>
+        el.textContent?.includes('VIP Fast Track')
       );
-      if (vipEl && vipEl.textContent?.includes('[PREMIUM]')) {
+
+      const hasPremiumOption = textSmEls.some((el: Element) =>
+        /premium/i.test(el.textContent ?? '')
+      );
+
+      if (hasVipFastTrack && hasPremiumOption) {
         result.serviceType = 'PREMIUM';
       }
 
       // travelers
-      const travelerBoxes = document.querySelectorAll(
-        '#info_type1 .box-primary'
-      );
       const names: string[] = [];
+      document
+        .querySelectorAll('#info_type1 .box-primary')
+        .forEach((box: Element) => {
+          let sur = '';
+          let first = '';
 
-      travelerBoxes.forEach((box: Element) => {
-        let sur = '';
-        let first = '';
+          box.querySelectorAll('.info-list li').forEach((li: Element) => {
+            const label = li.childNodes[0]?.textContent?.trim() ?? '';
+            const value =
+              li.querySelector('.pull-right b')?.textContent?.trim() ?? '';
 
-        box.querySelectorAll('.info-list li').forEach((li: Element) => {
-          const label = li.childNodes[0]?.textContent?.trim() ?? '';
-          const value =
-            li.querySelector('.pull-right b')?.textContent?.trim() ?? '';
+            if (label.includes('Passport Surname')) sur = value;
+            if (label.includes('Passport First Name')) first = value;
+          });
 
-          if (label.includes('Passport Surname')) sur = value;
-          if (label.includes('Passport First Name')) first = value;
+          const full = `${sur} ${first}`.trim();
+          if (full) names.push(full);
         });
-
-        const full = `${sur} ${first}`.trim();
-        if (full) names.push(full);
-      });
 
       result.name = names.join('\n');
 
@@ -447,8 +475,9 @@ export class KKdayCrawler {
       // prices
       document.querySelectorAll('.widget-price').forEach((el: Element) => {
         const m = el.textContent?.match(/([A-Z]{3})\s*([\d,]+)/);
-        if (!m) return;
-        result.prices[m[1]] = Number(m[2].replace(/,/g, ''));
+        if (m) {
+          result.prices[m[1]] = Number(m[2].replace(/,/g, ''));
+        }
       });
 
       return result;
@@ -516,14 +545,28 @@ export class KKdayCrawler {
     page: Page,
     bookingDate: string
   ): Promise<void> {
-    const flightDetail = await this.crawlOrderDetail(orderId, page);
+    try {
+      const flightDetail = await this.crawlOrderDetail(orderId, page);
 
-    if (!orderId) return;
+      console.log('orderId trong kkday crawl: ', orderId);
+      console.log('flight detail: ', flightDetail);
 
-    const records = await this.buildFullBookingInfo(flightDetail, bookingDate);
+      if (!orderId) return;
 
-    for (const r of records) {
-      await this.saveToSheet(r, 'timehouse@');
+      this.loggerService.info(`kkday booking id: ${orderId}`);
+
+      const records = await this.buildFullBookingInfo(
+        flightDetail,
+        bookingDate
+      );
+
+      for (const r of records) {
+        await this.saveToSheet(r, 'timehouse@');
+      }
+    } catch (error) {
+      this.loggerService.error(`Không lưu được kkday: ${error}`);
+      const errorText = JSON.stringify(error);
+      throw new Error(errorText);
     }
   }
 }
