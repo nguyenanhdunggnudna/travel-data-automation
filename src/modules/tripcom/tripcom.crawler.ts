@@ -133,6 +133,39 @@ export class TripComCrawler {
       await delay(500);
     }
 
+    // Handle "Password Modification" modal if it appears
+    try {
+      await page.waitForSelector('.ant-modal-footer .ant-btn-default', {
+        visible: true,
+        timeout: 5000
+      });
+
+      // Click "Not modified temporarily"
+      await page.evaluate(() => {
+        const btns = Array.from(
+          document.querySelectorAll('.ant-modal-footer .ant-btn')
+        ) as HTMLElement[];
+        const skipBtn = btns.find((b) =>
+          b.textContent?.includes('Not modified temporarily')
+        );
+        if (skipBtn) skipBtn.click();
+      });
+
+      await delay(1000);
+
+      // Click login button again after dismissing modal
+      await page.evaluate((LOGIN_SELECTOR) => {
+        const loginBtn = document.querySelector(
+          LOGIN_SELECTOR.LOGIN_BUTTON_SELECTOR
+        ) as HTMLElement | null;
+        if (loginBtn) loginBtn.click();
+      }, LOGIN_SELECTOR);
+
+      await delay(500);
+    } catch {
+      // Modal did not appear, continue normally
+    }
+
     await page
       .waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 })
       .catch(() => {
