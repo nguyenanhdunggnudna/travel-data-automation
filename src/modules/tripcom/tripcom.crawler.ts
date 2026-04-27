@@ -133,7 +133,15 @@ export class TripComCrawler {
       await delay(500);
     }
 
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
+    await page
+      .waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 })
+      .catch(() => {
+        // SPA login: no full navigation, wait for URL to leave login page
+        return page.waitForFunction(
+          () => !window.location.href.includes('login'),
+          { timeout: 30000 }
+        );
+      });
 
     const cookieDir = path.dirname(COOKIE_PATH);
     if (!fs.existsSync(cookieDir)) {
