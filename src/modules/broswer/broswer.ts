@@ -28,7 +28,7 @@ export class BrowserService {
   async newPage(platform: string): Promise<Page> {
     let COOKIE_PATH: string = '';
 
-    const headless = process.env.HEADLESS === 'true';
+    const headless = process.env.HEADLESS !== 'false';
 
     const browser = await this.initBrowser(headless);
     const page = await browser.newPage();
